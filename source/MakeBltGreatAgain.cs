@@ -4083,53 +4083,6 @@ public class BLTAurasModule : MBSubModuleBase
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // 4. TAUNT
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    [DisplayName("Taunt"),
-     Description("Enemies within range are forced to target this hero"),
-     UsedImplicitly]
-    public class TauntPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Taunt Range (meters)"), Description("How far (in meters) enemies can be forced to target this hero."), UsedImplicitly]
-        public float TauntRange { get; set; } = 8f;
-
-        [DisplayName("Max Enemies To Taunt"), Description("Maximum number of enemies that can be forced to target this hero at once."), UsedImplicitly]
-        public int MaxEnemies { get; set; } = 10;
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            float tauntRange = PowerProgression.ScaleFloat(this, hero, nameof(TauntRange), TauntRange);
-            int   maxEnemies = PowerProgression.ScaleInt(this, hero, nameof(MaxEnemies), MaxEnemies);
-
-            var nearbyBuffer = new MBList<Agent>();
-
-            handlers.OnSlowTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null || !heroAgent.IsActive()) return;
-                nearbyBuffer.Clear();
-                int taunted = 0;
-                foreach (var enemy in Mission.Current
-                    .GetNearbyAgents(heroAgent.Position.AsVec2, tauntRange, nearbyBuffer)
-                    .Where(a => a.IsActive() && a.IsEnemyOf(heroAgent) && !a.IsMount && a.GetAdoptedHero() == null))
-                {
-                    if (taunted >= maxEnemies) break;
-                    try { enemy.SetTargetAgent(heroAgent); } catch { }
-                    taunted++;
-                }
-            };
-        }
-
-        public override LocString Description =>
-            $"Taunt: forces up to {MaxEnemies} enemies within {TauntRange:0}m to target this hero";
-    }
-
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // 7. COMMANDER AURA (Reward)
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
@@ -5302,85 +5255,6 @@ public class BLTAurasModule : MBSubModuleBase
     }
 
     // ══════════════════════════════════════════════════════════════════════════════
-    // 23. BATTLE CRY AURA
-    // ══════════════════════════════════════════════════════════════════════════════
-
-    [DisplayName("Battle Cry Aura"),
-     Description("Allies within radius move/attack faster, gold contour"),
-     UsedImplicitly]
-    public class BattleCryAuraPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public float Radius { get; set; } = 8f;
-        [DisplayName("Speed Boost Multiplier"), Description("Multiplier applied to movement speed while boosted (1.0 = no change)."), UsedImplicitly] public float SpeedBoostMultiplier { get; set; } = 1.3f;
-        [DisplayName("Show Contour"), Description("Highlights affected agents with a colored outline while the effect is active - visual only, no gameplay effect."), UsedImplicitly] public bool ShowContour { get; set; } = true;
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly] public string ContourColor { get; set; } = "FFFFAA00";
-        [DisplayName("Tick Interval (seconds)"), Description("How often (in seconds) this effect re-evaluates and re-applies to nearby agents."), UsedImplicitly] public float TickIntervalSeconds { get; set; } = 3f;
-        [DisplayName("Max Agents Per Tick"), Description("Caps how many nearby agents this effect can hit per tick, closest first - keeps performance in check in large battles."), UsedImplicitly] public int MaxAgentsPerTick { get; set; } = 8;
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            float Radius = PowerProgression.ScaleFloat(this, hero, nameof(this.Radius), this.Radius);
-            float SpeedBoostMultiplier = PowerProgression.ScaleFloat(this, hero, nameof(this.SpeedBoostMultiplier), this.SpeedBoostMultiplier);
-            float tickInterval = PowerProgression.ScaleFloat(this, hero, nameof(TickIntervalSeconds), TickIntervalSeconds);
-            int   maxAgents    = PowerProgression.ScaleInt(this, hero, nameof(MaxAgentsPerTick), MaxAgentsPerTick);
-            float lastTick     = -999f;
-            var boostedAgents = new HashSet<Agent>();
-
-            handlers.OnMissionTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null) return;
-                float now = Mission.Current?.CurrentTime ?? 0f;
-                if (now - lastTick < tickInterval) return;
-                lastTick = now;
-
-                var inRange = Mission.Current?.Agents
-                    ?.Where(a => a != null && a.IsActive() && !a.IsEnemyOf(heroAgent) && a != heroAgent
-                                 && a.Position.Distance(heroAgent.Position) <= Radius)
-                    .OrderBy(a => a.Position.Distance(heroAgent.Position))
-                    .Take(Math.Max(1, maxAgents))
-                    .ToHashSet() ?? new HashSet<Agent>();
-
-                foreach (var a in boostedAgents.ToList())
-                {
-                    if (a == null || !a.IsActive() || !inRange.Contains(a))
-                    {
-                        try { a?.SetMaximumSpeedLimit(-1f, false); if (ShowContour) SafeSetContourColor(a, null, false); } catch { }
-                        boostedAgents.Remove(a);
-                    }
-                }
-
-                foreach (var a in inRange)
-                {
-                    if (!a.HasMount && !boostedAgents.Contains(a))
-                    {
-                        try { a.SetMaximumSpeedLimit(SpeedBoostMultiplier, false); if (ShowContour) SafeSetContourColor(a, Convert.ToUInt32(ContourColor, 16), true); } catch { }
-                        boostedAgents.Add(a);
-                    }
-                }
-            };
-
-            void Cleanup()
-            {
-                foreach (var a in boostedAgents)
-                {
-                    try { a?.SetMaximumSpeedLimit(-1f, false); if (ShowContour) SafeSetContourColor(a, null, false); } catch { }
-                }
-                boostedAgents.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Battle Cry Aura: allies within {Radius:0.#}m get {SpeedBoostMultiplier:0.##}x speed";
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════════
     // 24. BLOOD RAGE
     // ══════════════════════════════════════════════════════════════════════════════
 
@@ -6103,126 +5977,6 @@ public class BLTAurasModule : MBSubModuleBase
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // Mark Target — enemies near hero take bonus damage from all sources
-    // ══════════════════════════════════════════════════════════════════════
-    [DisplayName("Mark Target"),
-     Description("Enemies near the hero are marked — all allies deal bonus damage to them"),
-     UsedImplicitly]
-    public class MarkTargetPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Mark Radius (meters)"), Description("How far from the hero (in meters) enemies get marked by this effect."), UsedImplicitly] public float Radius { get; set; } = 8f;
-        [DisplayName("Bonus Damage Multiplier (%)"), Description("Multiplier applied to damage dealt while this effect's condition is met."), UsedImplicitly] public float BonusPercent { get; set; } = 30f;
-        [DisplayName("Show Contour"), Description("Highlights affected agents with a colored outline while the effect is active - visual only, no gameplay effect."), UsedImplicitly] public bool ShowContour { get; set; } = true;
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly] public string ContourColor { get; set; } = "FFFF4400";
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            uint color = 0;
-            try { color = Convert.ToUInt32(ContourColor, 16); } catch { color = 0xFFFF4400; }
-            float Radius = PowerProgression.ScaleFloat(this, hero, nameof(this.Radius), this.Radius);
-            float BonusPercent = PowerProgression.ScaleFloat(this, hero, nameof(this.BonusPercent), this.BonusPercent);
-            var marked = new HashSet<Agent>();
-
-            handlers.OnMissionTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null || !heroAgent.IsActive()) return;
-
-                var inRange = Mission.Current?.Agents
-                    ?.Where(a => a != null && a.IsActive() && a.IsEnemyOf(heroAgent)
-                                 && a.Position.Distance(heroAgent.Position) <= Radius)
-                    .ToHashSet() ?? new HashSet<Agent>();
-
-                foreach (var a in marked.ToList())
-                {
-                    if (a == null || !a.IsActive() || !inRange.Contains(a))
-                    { if (ShowContour) try { SafeSetContourColor(a, null, false); } catch { } marked.Remove(a); }
-                }
-                foreach (var a in inRange)
-                {
-                    if (!marked.Contains(a))
-                    { if (ShowContour) try { SafeSetContourColor(a, color, true); } catch { } marked.Add(a); }
-                }
-            };
-
-            handlers.OnDoDamage += (attacker, victim, blowParams) =>
-            {
-                if (victim == null || !marked.Contains(victim)) return;
-                float mult = 1f + BonusPercent / 100f;
-                blowParams.blow.BaseMagnitude *= mult;
-                blowParams.blow.InflictedDamage = (int)(blowParams.blow.InflictedDamage * mult);
-            };
-
-            void Cleanup() { foreach (var a in marked) { if (ShowContour) try { SafeSetContourColor(a, null, false); } catch { } } marked.Clear(); }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Mark Target: enemies within {Radius:0.#}m take +{BonusPercent:0}% damage from all";
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // Rallying Cry — one-time burst heal for all nearby allies
-    // ══════════════════════════════════════════════════════════════════════
-    [DisplayName("Rallying Cry"),
-     Description("Once per battle, heals all friendly units in radius when hero HP drops below threshold"),
-     UsedImplicitly]
-    public class RallyingCryPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Heal Amount"), Description("Flat HP restored."), UsedImplicitly] public int HealAmount { get; set; } = 40;
-        [DisplayName("Radius (meters)"), Description("Effect radius in meters."), UsedImplicitly] public float Radius { get; set; } = 15f;
-        [DisplayName("HP Trigger Threshold (%)"), Description("Triggers once the hero's HP drops to or below this percent of max."), UsedImplicitly] public float TriggerPercent { get; set; } = 30f;
-        [DisplayName("Show Contour"), Description("Highlights affected agents with a colored outline while the effect is active - visual only, no gameplay effect."), UsedImplicitly] public bool ShowContour { get; set; } = true;
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly] public string ContourColor { get; set; } = "FF00FF44";
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            uint color = 0;
-            try { color = Convert.ToUInt32(ContourColor, 16); } catch { color = 0xFF00FF44; }
-            int HealAmount = PowerProgression.ScaleInt(this, hero, nameof(this.HealAmount), this.HealAmount);
-            float Radius = PowerProgression.ScaleFloat(this, hero, nameof(this.Radius), this.Radius);
-            bool used = false;
-
-            handlers.OnMissionTick += dt =>
-            {
-                if (used) return;
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null || !heroAgent.IsActive()) return;
-                float hpPct = heroAgent.Health / heroAgent.HealthLimit * 100f;
-                if (hpPct > TriggerPercent) return;
-
-                used = true;
-                Log.ShowInformation($"RALLYING CRY! {hero.Name} rallies the troops!", hero.CharacterObject);
-                if (ShowContour) try { SafeSetContourColor(heroAgent, color, true); } catch { }
-
-                foreach (var a in Mission.Current?.Agents?.ToList() ?? new List<Agent>())
-                {
-                    if (a == null || !a.IsActive() || a.IsEnemyOf(heroAgent)) continue;
-                    if (a.Position.Distance(heroAgent.Position) > Radius) continue;
-                    try
-                    {
-                        a.Health = Math.Min(a.Health + HealAmount, a.HealthLimit);
-                        if (ShowContour) SafeSetContourColor(a, color, true);
-                    }
-                    catch { }
-                }
-            };
-        }
-
-        public override LocString Description =>
-            $"Rallying Cry: heals all allies {HealAmount}HP in {Radius:0.#}m when below {TriggerPercent:0}% HP (once)";
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
     // UNIFIED AURA — consolidates Taunt/Damage/Curse/Fear/Slow/Weakness/
     // Shockwave/Mark Target/Heal/Buff/BattleCry/Rallying Cry into ONE
     // configurable power (pick a Target side + an Effect type). Per the TOR
@@ -6794,12 +6548,6 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Damage Reduction (%)"), Description("Percentage reduction applied to incoming damage while this effect is active."), UsedImplicitly] public string DamageReductionPercent { get; set; } = "";
         [DisplayName("Duration (seconds)"), Description("How long (in seconds) this effect lasts once triggered."), UsedImplicitly] public string DurationSeconds { get; set; } = "";
     }
-    public class TauntSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "TauntPower";
-        [DisplayName("Taunt Range"), Description("How far (in meters) enemies can be forced to target this hero."), UsedImplicitly] public string TauntRange { get; set; } = "";
-        [DisplayName("Max Enemies"), Description("Maximum number of enemies this effect can affect at once."), UsedImplicitly] public string MaxEnemies { get; set; } = "";
-    }
     public class CurseAuraSection : PowerProgressionSection
     {
         public override string GetTargetType() => "CurseAuraPower";
@@ -6905,12 +6653,6 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public string Radius { get; set; } = "";
         [DisplayName("Fear Chance Per Tick (%)"), Description("Chance per tick that a nearby enemy becomes feared."), UsedImplicitly] public string FearChancePercent { get; set; } = "";
     }
-    public class BattleCryAuraSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "BattleCryAuraPower";
-        [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public string Radius { get; set; } = "";
-        [DisplayName("Speed Boost Multiplier"), Description("Multiplier applied to movement speed while boosted (1.0 = no change)."), UsedImplicitly] public string SpeedBoostMultiplier { get; set; } = "";
-    }
     public class BloodRageSection : PowerProgressionSection
     {
         public override string GetTargetType() => "BloodRagePower";
@@ -6954,18 +6696,6 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Aura Radius (meters)"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public string Radius { get; set; } = "";
         [DisplayName("Speed Multiplier"), Description("Multiplier applied to movement speed (1.0 = no change)."), UsedImplicitly] public string SpeedMult { get; set; } = "";
     }
-    public class MarkTargetSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "MarkTargetPower";
-        [DisplayName("Mark Radius (meters)"), Description("How far from the hero (in meters) enemies get marked by this effect."), UsedImplicitly] public string Radius { get; set; } = "";
-        [DisplayName("Bonus Damage Multiplier (%)"), Description("Multiplier applied to damage dealt while this effect's condition is met."), UsedImplicitly] public string BonusPercent { get; set; } = "";
-    }
-    public class RallyingCrySection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "RallyingCryPower";
-        [DisplayName("Heal Amount"), Description("Flat HP restored."), UsedImplicitly] public string HealAmount { get; set; } = "";
-        [DisplayName("Radius (meters)"), Description("Effect radius in meters."), UsedImplicitly] public string Radius { get; set; } = "";
-    }
     public class StealthSection : PowerProgressionSection
     {
         public override string GetTargetType() => "StealthPower";
@@ -7008,7 +6738,6 @@ public class BLTAurasModule : MBSubModuleBase
         // W każdym polu wpisz wartości PO PRZECINKU — jedna liczba na tier (np. 8,12,18). Puste pole = wartość bazowa (bez skalowania).
         [DisplayName("Berserk"), Category("2 - Powers"), PropertyOrder(11), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BerserkSection Berserk { get; set; } = new BerserkSection();
         [DisplayName("Last Stand"), Category("2 - Powers"), PropertyOrder(12), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public LastStandSection LastStand { get; set; } = new LastStandSection();
-        [DisplayName("Taunt"), Category("2 - Powers"), PropertyOrder(13), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public TauntSection Taunt { get; set; } = new TauntSection();
         [DisplayName("Curse Aura"), Category("2 - Powers"), PropertyOrder(16), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public CurseAuraSection CurseAura { get; set; } = new CurseAuraSection();
         [DisplayName("Buff Aura"), Category("2 - Powers"), PropertyOrder(17), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BuffAuraSection BuffAura { get; set; } = new BuffAuraSection();
         [DisplayName("Teleport (Passive)"), Category("2 - Powers"), PropertyOrder(18), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public TeleportSection Teleport { get; set; } = new TeleportSection();
@@ -7023,7 +6752,6 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Vampirism Strike"), Category("2 - Powers"), PropertyOrder(32), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public VampirismStrikeSection VampirismStrike { get; set; } = new VampirismStrikeSection();
         [DisplayName("Chain Lightning"), Category("2 - Powers"), PropertyOrder(33), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public ChainLightningSection ChainLightning { get; set; } = new ChainLightningSection();
         [DisplayName("Fear Aura"), Category("2 - Powers"), PropertyOrder(34), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public FearAuraSection FearAura { get; set; } = new FearAuraSection();
-        [DisplayName("Battle Cry Aura"), Category("2 - Powers"), PropertyOrder(37), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BattleCryAuraSection BattleCryAura { get; set; } = new BattleCryAuraSection();
         [DisplayName("Blood Rage"), Category("2 - Powers"), PropertyOrder(38), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BloodRageSection BloodRage { get; set; } = new BloodRageSection();
         [DisplayName("Shadowstep"), Category("2 - Powers"), PropertyOrder(39), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public ShadowstepSection Shadowstep { get; set; } = new ShadowstepSection();
         [DisplayName("Iron Skin"), Category("2 - Powers"), PropertyOrder(40), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public IronSkinSection IronSkin { get; set; } = new IronSkinSection();
@@ -7032,8 +6760,6 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Backstab"), Category("2 - Powers"), PropertyOrder(43), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BackstabSection Backstab { get; set; } = new BackstabSection();
         [DisplayName("Shockwave"), Category("2 - Powers"), PropertyOrder(44), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public ShockwaveSection Shockwave { get; set; } = new ShockwaveSection();
         [DisplayName("War Banner"), Category("2 - Powers"), PropertyOrder(45), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public WarBannerSection WarBanner { get; set; } = new WarBannerSection();
-        [DisplayName("Mark Target"), Category("2 - Powers"), PropertyOrder(46), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public MarkTargetSection MarkTarget { get; set; } = new MarkTargetSection();
-        [DisplayName("Rallying Cry"), Category("2 - Powers"), PropertyOrder(47), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public RallyingCrySection RallyingCry { get; set; } = new RallyingCrySection();
         [DisplayName("Stealth"), Category("2 - Powers"), PropertyOrder(48), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public StealthSection Stealth { get; set; } = new StealthSection();
 
         public PowerProgressionSection GetSection(string typeName)
