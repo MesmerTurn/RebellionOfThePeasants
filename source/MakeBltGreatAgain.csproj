@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>MakeBltGreatAgain</AssemblyName>
+    <RootNamespace>MakeBltGreatAgain</RootNamespace>
+    <Optimize>true</Optimize>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <BannerlordPath>C:\SteamLibrary\steamapps\common\Mount &amp; Blade II Bannerlord</BannerlordPath>
+    <BLTPath>$(BannerlordPath)\Modules\BannerlordTwitch</BLTPath>
+    <BLTAAHDllPath Condition="'$(BLTAAHDllPath)'==''">$(BannerlordPath)\Modules\BLTAdoptAHero\bin\Win64_Shipping_Client\BLTAdoptAHero.dll</BLTAAHDllPath>
+    <XceedPath>$(BLTPath)\bin\Win64_Shipping_Client</XceedPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="MakeBltGreatAgain.cs"/>
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="TaleWorlds.Core"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.CampaignSystem"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.CampaignSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.MountAndBlade"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.MountAndBlade.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.Library"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.Library.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.Engine"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.Engine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.ObjectSystem"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.ObjectSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.Localization"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.Localization.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="TaleWorlds.DotNet"><HintPath>$(BannerlordPath)\bin\Win64_Shipping_Client\TaleWorlds.DotNet.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SandBox"><HintPath>$(BannerlordPath)\Modules\SandBox\bin\Win64_Shipping_Client\SandBox.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BannerlordTwitch"><HintPath>$(BLTPath)\bin\Win64_Shipping_Client\BannerlordTwitch.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BLTAdoptAHero"><HintPath>$(BLTAAHDllPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.ComponentModel.DataAnnotations" />
+    <Reference Include="Xceed.Wpf.Toolkit"><HintPath>$(XceedPath)\Xceed.Wpf.Toolkit.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(BLTPath)\bin\Win64_Shipping_Client\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$(BLTPath)\bin\Win64_Shipping_Client\Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="CopyDll" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)MakeBltGreatAgain.dll"
+          DestinationFolder="$(MSBuildProjectDirectory)\..\bin\Win64_Shipping_Client"
+          SkipUnchangedFiles="true"/>
+  </Target>
+</Project>
+
+
