@@ -3883,104 +3883,8 @@ public class BLTAurasModule : MBSubModuleBase
             $"Composed Self-Buff (Beta): +{DamageBonusPercent:0}% dmg, -{DamageReductionPercent:0}% taken";
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // 1. POISON STRIKE
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     public enum PoisonApplyOn { Both, RangedOnly, MeleeOnly }
-
-    [DisplayName("Poison Strike"),
-     Description("Each hit poisons the target, dealing damage over time every 2 seconds"),
-     UsedImplicitly]
-    public class PoisonStrikePower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Poison Damage Per Tick"), Description("Damage dealt each tick while poisoned."), UsedImplicitly]
-        public int PoisonDamagePerTick { get; set; } = 10;
-
-        [DisplayName("Poison Duration (ticks)"), Description("How many ticks the poison effect lasts."), UsedImplicitly]
-        public int PoisonDurationTicks { get; set; } = 5;
-
-        [DisplayName("Apply On"), Description("Which kind of attacks this effect applies to (melee, ranged, or both)."), UsedImplicitly]
-        public PoisonApplyOn ApplyOn { get; set; } = PoisonApplyOn.Both;
-
-        [DisplayName("Show Poison Contour"), Description("Highlights poisoned agents with a colored outline - visual only."), UsedImplicitly]
-        public bool ShowPoisonContour { get; set; } = true;
-
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly]
-        public string PoisonContourColor { get; set; } = "FF00CC00";
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            int poisonDamagePerTick = PowerProgression.ScaleInt(this, hero, nameof(PoisonDamagePerTick), PoisonDamagePerTick);
-            int poisonDurationTicks = PowerProgression.ScaleInt(this, hero, nameof(PoisonDurationTicks), PoisonDurationTicks);
-
-            var poisonedAgents = new Dictionary<Agent, int>();
-
-            handlers.OnDoDamage += (attacker, victim, blowParams) =>
-            {
-                if (victim == null || !victim.IsActive()) return;
-                if (attacker == null || !victim.IsEnemyOf(attacker)) return;
-                if (ApplyOn != PoisonApplyOn.Both)
-                {
-                    bool isRanged = attacker != null
-                        && !attacker.WieldedWeapon.IsEmpty
-                        && attacker.WieldedWeapon.CurrentUsageItem?.IsRangedWeapon == true;
-                    if (ApplyOn == PoisonApplyOn.RangedOnly && !isRanged) return;
-                    if (ApplyOn == PoisonApplyOn.MeleeOnly && isRanged) return;
-                }
-                poisonedAgents[victim] = poisonDurationTicks;
-                if (ShowPoisonContour)
-                    try { SafeSetContourColor(victim, Convert.ToUInt32(PoisonContourColor, 16), true); }
-                    catch { SafeSetContourColor(victim, 0xFF00CC00u, true); }
-            };
-
-            handlers.OnSlowTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null) return;
-                foreach (var key in poisonedAgents.Keys.ToList())
-                {
-                    if (key == null || !key.IsActive()) { poisonedAgents.Remove(key); continue; }
-                    try
-                    {
-                        var dir = Vec3.Up;
-                        var blow = new Blow(heroAgent.Index)
-                        {
-                            AttackType = AgentAttackType.Standard, DamageType = DamageTypes.Pierce,
-                            BoneIndex = key.Monster.HeadLookDirectionBoneIndex, GlobalPosition = key.Position,
-                            BaseMagnitude = poisonDamagePerTick, InflictedDamage = poisonDamagePerTick,
-                            SwingDirection = dir, Direction = dir, DamageCalculated = true,
-                            VictimBodyPart = BoneBodyPartType.Chest,
-                        };
-                        key.RegisterBlow(blow, AgentHelpers.CreateCollisionDataFromBlow(heroAgent, key, blow));
-                    }
-                    catch { }
-                    poisonedAgents[key]--;
-                    if (poisonedAgents[key] <= 0)
-                    {
-                        if (ShowPoisonContour) try { SafeSetContourColor(key, null, false); } catch { }
-                        poisonedAgents.Remove(key);
-                    }
-                }
-            };
-
-            void Cleanup()
-            {
-                if (ShowPoisonContour)
-                    foreach (var a in poisonedAgents.Keys) try { SafeSetContourColor(a, null, false); } catch { }
-                poisonedAgents.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Poison: {PoisonDamagePerTick} dmg/2s for {PoisonDurationTicks * 2}s";
-    }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // 2. BERSERK
@@ -4223,204 +4127,6 @@ public class BLTAurasModule : MBSubModuleBase
 
         public override LocString Description =>
             $"Taunt: forces up to {MaxEnemies} enemies within {TauntRange:0}m to target this hero";
-    }
-
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // 5. HEAL AURA
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    [DisplayName("Heal Aura"),
-     Description("Heals all friendly units within range every 2 seconds"),
-     UsedImplicitly]
-    public class HealAuraPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Heal Per Tick"), Description("HP restored each tick."), UsedImplicitly]
-        public float HealPerTick { get; set; } = 5f;
-
-        [DisplayName("Heal Range (meters)"), Description("How far from the hero (in meters) allies are healed."), UsedImplicitly]
-        public float HealRange { get; set; } = 10f;
-
-        [DisplayName("Heal Self"), Description("Whether the hero itself is included when healing nearby allies."), UsedImplicitly]
-        public bool HealSelf { get; set; } = true;
-
-        [DisplayName("Show Heal Contour"), Description("Highlights healed agents with a colored outline - visual only."), UsedImplicitly]
-        public bool ShowHealContour { get; set; } = true;
-
-        [DisplayName("Heal Contour Color (hex AARRGGBB)"), Description("Outline color shown on healed agents, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue."), UsedImplicitly]
-        public string HealContourColor { get; set; } = "FF00FF44";
-
-        [DisplayName("Tick Interval (seconds)"), Description("How often (in seconds) this effect re-evaluates and re-applies to nearby agents."), UsedImplicitly]
-        public float TickIntervalSeconds { get; set; } = 3f;
-
-        [DisplayName("Max Agents Per Tick"), Description("Caps how many nearby agents this effect can hit per tick, closest first - keeps performance in check in large battles."), UsedImplicitly]
-        public int MaxAgentsPerTick { get; set; } = 8;
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            float healPerTick = PowerProgression.ScaleFloat(this, hero, nameof(HealPerTick), HealPerTick);
-            float healRange   = PowerProgression.ScaleFloat(this, hero, nameof(HealRange), HealRange);
-            float tickInterval = PowerProgression.ScaleFloat(this, hero, nameof(TickIntervalSeconds), TickIntervalSeconds);
-            int   maxAgents    = PowerProgression.ScaleInt(this, hero, nameof(MaxAgentsPerTick), MaxAgentsPerTick);
-            float lastTick     = -999f;
-
-            var nearbyBuffer = new MBList<Agent>();
-            var lastInRange = new HashSet<Agent>();
-
-            handlers.OnSlowTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null || !heroAgent.IsActive())
-                {
-                    foreach (var a in lastInRange) try { SafeSetContourColor(a, null, false); } catch { }
-                    lastInRange.Clear();
-                    return;
-                }
-                float now = Mission.Current?.CurrentTime ?? 0f;
-                if (now - lastTick < tickInterval) return;
-                lastTick = now;
-                nearbyBuffer.Clear();
-                var nowInRange = new HashSet<Agent>(Mission.Current
-                    .GetNearbyAgents(heroAgent.Position.AsVec2, healRange, nearbyBuffer)
-                    .Where(a => a.IsActive() && !a.IsMount && a.IsFriendOf(heroAgent))
-                    .OrderBy(a => a.Position.Distance(heroAgent.Position))
-                    .Take(Math.Max(1, maxAgents)));
-
-                foreach (var a in lastInRange)
-                    if (!nowInRange.Contains(a)) try { SafeSetContourColor(a, null, false); } catch { }
-
-                if (ShowHealContour)
-                {
-                    uint color = Convert.ToUInt32(HealContourColor, 16);
-                    foreach (var a in nowInRange) try { SafeSetContourColor(a, color, true); } catch { }
-                }
-                foreach (var ally in nowInRange)
-                {
-                    if (!HealSelf && ally == heroAgent) continue;
-                    ally.Health = Math.Min(ally.Health + healPerTick, ally.HealthLimit);
-                }
-                lastInRange.Clear();
-                foreach (var a in nowInRange) lastInRange.Add(a);
-            };
-
-            void Cleanup()
-            {
-                foreach (var a in lastInRange) try { SafeSetContourColor(a, null, false); } catch { }
-                lastInRange.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Heal Aura: +{HealPerTick:0} HP/2s to all allies within {HealRange:0}m";
-    }
-
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // 6. DAMAGE AURA
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    [DisplayName("Damage Aura"),
-     Description("Deals damage to all enemies within range every 2 seconds"),
-     UsedImplicitly]
-    public class DamageAuraPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Damage Per Tick"), Description("Damage dealt on each tick of this effect."), UsedImplicitly]
-        public int DamagePerTick { get; set; } = 8;
-
-        [DisplayName("Damage Range (meters)"), Description("How far from the hero (in meters) this damage effect reaches."), UsedImplicitly]
-        public float DamageRange { get; set; } = 8f;
-
-        [DisplayName("Show Damage Contour"), Description("Highlights damaged agents with a colored outline - visual only."), UsedImplicitly]
-        public bool ShowDamageContour { get; set; } = true;
-
-        [DisplayName("Damage Contour Color (hex AARRGGBB)"), Description("Outline color shown on damaged agents, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue."), UsedImplicitly]
-        public string DamageContourColor { get; set; } = "FFFF2200";
-
-        [DisplayName("Max Agents Per Tick"), Description("Caps how many nearby agents this effect can hit per tick, closest first - keeps performance in check in large battles."), UsedImplicitly]
-        public int MaxAgentsPerTick { get; set; } = 5;
-
-        [DisplayName("Tick Interval (seconds)"), Description("How often (in seconds) this effect re-evaluates and re-applies to nearby agents."), UsedImplicitly]
-        public float TickIntervalSeconds { get; set; } = 3f;
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            int   damagePerTick = PowerProgression.ScaleInt(this, hero, nameof(DamagePerTick), DamagePerTick);
-            float damageRange   = PowerProgression.ScaleFloat(this, hero, nameof(DamageRange), DamageRange);
-            int   maxAgents     = PowerProgression.ScaleInt(this, hero, nameof(MaxAgentsPerTick), MaxAgentsPerTick);
-            float tickInterval  = PowerProgression.ScaleFloat(this, hero, nameof(TickIntervalSeconds), TickIntervalSeconds);
-            float lastTick      = -999f;
-
-            var nearbyBuffer = new MBList<Agent>();
-            var lastInRange = new HashSet<Agent>();
-
-            handlers.OnSlowTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null || !heroAgent.IsActive())
-                {
-                    foreach (var a in lastInRange) try { SafeSetContourColor(a, null, false); } catch { }
-                    lastInRange.Clear();
-                    return;
-                }
-                float now = Mission.Current?.CurrentTime ?? 0f;
-                if (now - lastTick < tickInterval) return;
-                lastTick = now;
-                nearbyBuffer.Clear();
-                // Limit to the nearest N enemies per tick (Max Agents Per Tick)
-                var nowInRange = new HashSet<Agent>(Mission.Current
-                    .GetNearbyAgents(heroAgent.Position.AsVec2, damageRange, nearbyBuffer)
-                    .Where(a => a.IsActive() && !a.IsMount && a.IsEnemyOf(heroAgent))
-                    .OrderBy(a => a.Position.Distance(heroAgent.Position))
-                    .Take(Math.Max(1, maxAgents)));
-
-                foreach (var a in lastInRange)
-                    if (!nowInRange.Contains(a)) try { SafeSetContourColor(a, null, false); } catch { }
-
-                if (ShowDamageContour)
-                {
-                    uint color = Convert.ToUInt32(DamageContourColor, 16);
-                    foreach (var a in nowInRange) try { SafeSetContourColor(a, color, true); } catch { }
-                }
-                foreach (var enemy in nowInRange)
-                {
-                    try
-                    {
-                        var dir = Vec3.Up;
-                        var blow = new Blow(heroAgent.Index)
-                        {
-                            AttackType = AgentAttackType.Standard, DamageType = DamageTypes.Pierce,
-                            BoneIndex = enemy.Monster.HeadLookDirectionBoneIndex, GlobalPosition = enemy.Position,
-                            BaseMagnitude = damagePerTick, InflictedDamage = damagePerTick,
-                            SwingDirection = dir, Direction = dir, DamageCalculated = true,
-                            VictimBodyPart = BoneBodyPartType.Chest,
-                        };
-                        enemy.RegisterBlow(blow, AgentHelpers.CreateCollisionDataFromBlow(heroAgent, enemy, blow));
-                    }
-                    catch { }
-                }
-                lastInRange.Clear();
-                foreach (var a in nowInRange) lastInRange.Add(a);
-            };
-
-            void Cleanup()
-            {
-                foreach (var a in lastInRange) try { SafeSetContourColor(a, null, false); } catch { }
-                lastInRange.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Damage Aura: {DamagePerTick} dmg/2s to all enemies within {DamageRange:0}m";
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -5193,94 +4899,6 @@ public class BLTAurasModule : MBSubModuleBase
     }
 
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // 16. BURNING STRIKE
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    [DisplayName("Burning Strike"),
-     Description("Each hit sets the enemy on fire: contour + fire DoT damage"),
-     UsedImplicitly]
-    public class BurningStrikePower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Fire Damage Per Tick"), Description("Burn damage dealt each tick."), UsedImplicitly] public int FireDamagePerTick { get; set; } = 12;
-        [DisplayName("Burn Duration (ticks)"), Description("How many ticks the burn effect lasts."), UsedImplicitly] public int BurnDurationTicks { get; set; } = 4;
-        [DisplayName("Refresh On Hit"), Description("Whether landing another hit refreshes this effect's duration instead of stacking."), UsedImplicitly] public bool RefreshOnHit { get; set; } = true;
-        [DisplayName("Show Contour"), Description("Highlights affected agents with a colored outline while the effect is active - visual only, no gameplay effect."), UsedImplicitly] public bool ShowContour { get; set; } = true;
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly] public string ContourColor { get; set; } = "FFFF4400";
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            int fireDamagePerTick = PowerProgression.ScaleInt(this, hero, nameof(FireDamagePerTick), FireDamagePerTick);
-            int burnDurationTicks = PowerProgression.ScaleInt(this, hero, nameof(BurnDurationTicks), BurnDurationTicks);
-            var burningAgents = new Dictionary<Agent, int>();
-
-            handlers.OnDoDamage += (attacker, victim, blowParams) =>
-            {
-                if (victim == null || !victim.IsActive()) return;
-                if (attacker == null || !victim.IsEnemyOf(attacker)) return;
-                if (RefreshOnHit || !burningAgents.ContainsKey(victim)) burningAgents[victim] = burnDurationTicks;
-                if (ShowContour)
-                {
-                    try { SafeSetContourColor(victim, Convert.ToUInt32(ContourColor, 16), true); }
-                    catch { SafeSetContourColor(victim, 0xFFFF4400u, true); }
-                }
-                // Efekt eksplozji ognia przy trafieniu
-                try
-                {
-                    int psysId = ParticleSystemManager.GetRuntimeIdByName("explosion_fire_medium");
-                    if (psysId >= 0)
-                    {
-                        var frame = MatrixFrame.Identity;
-                        frame.origin = victim.Position + new Vec3(0f, 0f, 0.8f);
-                        Mission.Current?.Scene?.CreateBurstParticle(psysId, frame);
-                    }
-                }
-                catch { }
-            };
-
-            handlers.OnSlowTick += dt =>
-            {
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null) return;
-                foreach (var key in burningAgents.Keys.ToList())
-                {
-                    if (key == null || !key.IsActive()) { if (ShowContour) try { SafeSetContourColor(key, null, false); } catch { } burningAgents.Remove(key); continue; }
-                    try
-                    {
-                        var dir = Vec3.Up;
-                        var blow = new Blow(heroAgent.Index)
-                        {
-                            AttackType = AgentAttackType.Standard, DamageType = DamageTypes.Pierce,
-                            BoneIndex = key.Monster.HeadLookDirectionBoneIndex, GlobalPosition = key.Position,
-                            BaseMagnitude = fireDamagePerTick, InflictedDamage = fireDamagePerTick,
-                            SwingDirection = dir, Direction = dir, DamageCalculated = true,
-                            VictimBodyPart = BoneBodyPartType.Chest,
-                        };
-                        key.RegisterBlow(blow, AgentHelpers.CreateCollisionDataFromBlow(heroAgent, key, blow));
-                    }
-                    catch { }
-                    burningAgents[key]--;
-                    if (burningAgents[key] <= 0) { if (ShowContour) try { SafeSetContourColor(key, null, false); } catch { } burningAgents.Remove(key); }
-                }
-            };
-
-            void Cleanup()
-            {
-                if (ShowContour) foreach (var a in burningAgents.Keys) try { SafeSetContourColor(a, null, false); } catch { }
-                burningAgents.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Burning Strike: hit ignites enemy ({FireDamagePerTick} fire dmg/2s for {BurnDurationTicks * 2}s)";
-    }
-
     // ══════════════════════════════════════════════════════════════════════════════
     // 16. FROST STRIKE
     // ══════════════════════════════════════════════════════════════════════════════
@@ -5681,168 +5299,6 @@ public class BLTAurasModule : MBSubModuleBase
 
         public override LocString Description =>
             $"Fear Aura: {FearChancePercent}% chance to flee every {FearTickInterval:0.#}s within {Radius:0.#}m";
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════════
-    // 21. SLOW AURA
-    // ══════════════════════════════════════════════════════════════════════════════
-
-    [DisplayName("Slow Aura"),
-     Description("Enemies within radius are slowed, cyan contour"),
-     UsedImplicitly]
-    public class SlowAuraPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public float Radius { get; set; } = 5f;
-        [DisplayName("Slow Speed Limit"), Description("Maximum movement speed fraction (0-1) allowed while slowed - lower is a stronger slow."), UsedImplicitly] public float SlowSpeedLimit { get; set; } = 0.5f;
-        [DisplayName("Tick Interval (seconds)"), Description("How often (in seconds) this effect re-evaluates and re-applies to nearby agents."), UsedImplicitly] public float UpdateInterval { get; set; } = 3f;
-        [DisplayName("Max Agents Per Tick"), Description("Caps how many nearby agents this effect can hit per tick, closest first - keeps performance in check in large battles."), UsedImplicitly] public int MaxAgentsPerTick { get; set; } = 5;
-        [DisplayName("Show Contour"), Description("Highlights affected agents with a colored outline while the effect is active - visual only, no gameplay effect."), UsedImplicitly] public bool ShowContour { get; set; } = true;
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly] public string ContourColor { get; set; } = "FF00FFCC";
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            float Radius = PowerProgression.ScaleFloat(this, hero, nameof(this.Radius), this.Radius);
-            int maxAgents = PowerProgression.ScaleInt(this, hero, nameof(MaxAgentsPerTick), MaxAgentsPerTick);
-            var slowedAgents = new HashSet<Agent>();
-            float lastUpdate = -999f;
-
-            handlers.OnMissionTick += dt =>
-            {
-                float now = Mission.Current?.CurrentTime ?? 0f;
-                if (now - lastUpdate < UpdateInterval) return;
-                lastUpdate = now;
-
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null) return;
-
-                var inRange = Mission.Current?.Agents
-                    ?.Where(a => a != null && a.IsActive() && a.IsEnemyOf(heroAgent)
-                                 && a.Position.Distance(heroAgent.Position) <= Radius)
-                    .OrderBy(a => a.Position.Distance(heroAgent.Position))
-                    .Take(Math.Max(1, maxAgents))
-                    .ToHashSet() ?? new HashSet<Agent>();
-
-                foreach (var a in slowedAgents.ToList())
-                {
-                    if (a == null || !a.IsActive() || !inRange.Contains(a))
-                    {
-                        try { a?.SetMaximumSpeedLimit(-1f, false); if (ShowContour) SafeSetContourColor(a, null, false); } catch { }
-                        slowedAgents.Remove(a);
-                    }
-                }
-
-                foreach (var a in inRange)
-                {
-                    if (!slowedAgents.Contains(a))
-                    {
-                        try { a.SetMaximumSpeedLimit(SlowSpeedLimit, false); if (ShowContour) SafeSetContourColor(a, Convert.ToUInt32(ContourColor, 16), true); } catch { }
-                        slowedAgents.Add(a);
-                    }
-                }
-            };
-
-            void Cleanup()
-            {
-                foreach (var a in slowedAgents)
-                {
-                    try { a?.SetMaximumSpeedLimit(-1f, false); if (ShowContour) SafeSetContourColor(a, null, false); } catch { }
-                }
-                slowedAgents.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Slow Aura: enemies within {Radius:0.#}m slowed to {SlowSpeedLimit:0.##}x speed";
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════════
-    // 22. WEAKNESS AURA
-    // ══════════════════════════════════════════════════════════════════════════════
-
-    [DisplayName("Weakness Aura"),
-     Description("Enemies within radius deal reduced damage, grey contour"),
-     UsedImplicitly]
-    public class WeaknessAuraPower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
-    {
-        [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public float Radius { get; set; } = 6f;
-        [DisplayName("Damage Reduction (%)"), Description("Percentage reduction applied to incoming damage while this effect is active."), UsedImplicitly] public float DamageReductionPercent { get; set; } = 30f;
-        [DisplayName("Tick Interval (seconds)"), Description("How often (in seconds) this effect re-evaluates and re-applies to nearby agents."), UsedImplicitly] public float UpdateInterval { get; set; } = 3f;
-        [DisplayName("Max Agents Per Tick"), Description("Caps how many nearby agents this effect can hit per tick, closest first - keeps performance in check in large battles."), UsedImplicitly] public int MaxAgentsPerTick { get; set; } = 5;
-        [DisplayName("Show Contour"), Description("Highlights affected agents with a colored outline while the effect is active - visual only, no gameplay effect."), UsedImplicitly] public bool ShowContour { get; set; } = true;
-        [DisplayName("Contour Color (hex AARRGGBB)"), Description("Outline color shown when Show Contour is on, as an 8-digit hex code: AA=alpha, RR=red, GG=green, BB=blue (e.g. FFFF0000 = solid red)."), UsedImplicitly] public string ContourColor { get; set; } = "FF888888";
-
-        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
-            => OnActivation(hero, handlers);
-
-        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
-            Agent agent = null, DeactivationHandler deactivationHandler = null)
-        {
-            float Radius = PowerProgression.ScaleFloat(this, hero, nameof(this.Radius), this.Radius);
-            float DamageReductionPercent = PowerProgression.ScaleFloat(this, hero, nameof(this.DamageReductionPercent), this.DamageReductionPercent);
-            int maxAgents = PowerProgression.ScaleInt(this, hero, nameof(MaxAgentsPerTick), MaxAgentsPerTick);
-            var weakenedAgents = new HashSet<Agent>();
-            float lastUpdate = -999f;
-
-            handlers.OnMissionTick += dt =>
-            {
-                float now = Mission.Current?.CurrentTime ?? 0f;
-                if (now - lastUpdate < UpdateInterval) return;
-                lastUpdate = now;
-
-                var heroAgent = hero.GetAgent();
-                if (heroAgent == null) return;
-
-                var inRange = Mission.Current?.Agents
-                    ?.Where(a => a != null && a.IsActive() && a.IsEnemyOf(heroAgent)
-                                 && a.Position.Distance(heroAgent.Position) <= Radius)
-                    .OrderBy(a => a.Position.Distance(heroAgent.Position))
-                    .Take(Math.Max(1, maxAgents))
-                    .ToHashSet() ?? new HashSet<Agent>();
-
-                foreach (var a in weakenedAgents.ToList())
-                {
-                    if (a == null || !a.IsActive() || !inRange.Contains(a))
-                    {
-                        if (ShowContour) try { SafeSetContourColor(a, null, false); } catch { }
-                        weakenedAgents.Remove(a);
-                    }
-                }
-
-                foreach (var a in inRange)
-                {
-                    if (!weakenedAgents.Contains(a))
-                    {
-                        if (ShowContour) try { SafeSetContourColor(a, Convert.ToUInt32(ContourColor, 16), true); } catch { }
-                        weakenedAgents.Add(a);
-                    }
-                }
-            };
-
-            handlers.OnDoDamage += (attacker, victim, blowParams) =>
-            {
-                if (attacker == null || !weakenedAgents.Contains(attacker)) return;
-                float mult = 1f - DamageReductionPercent / 100f;
-                blowParams.blow.BaseMagnitude *= mult;
-                blowParams.blow.InflictedDamage = (int)(blowParams.blow.InflictedDamage * mult);
-            };
-
-            void Cleanup()
-            {
-                if (ShowContour) foreach (var a in weakenedAgents) try { SafeSetContourColor(a, null, false); } catch { }
-                weakenedAgents.Clear();
-            }
-            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
-            handlers.OnMissionOver += Cleanup;
-        }
-
-        public override LocString Description =>
-            $"Weakness Aura: enemies within {Radius:0.#}m deal {DamageReductionPercent}% less damage";
     }
 
     // ══════════════════════════════════════════════════════════════════════════════
@@ -7324,12 +6780,6 @@ public class BLTAurasModule : MBSubModuleBase
     }
 
     // ── Sekcje mocy MBGA ──
-    public class PoisonStrikeSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "PoisonStrikePower";
-        [DisplayName("Poison Damage Per Tick"), Description("Damage dealt each tick while poisoned."), UsedImplicitly] public string PoisonDamagePerTick { get; set; } = "";
-        [DisplayName("Poison Duration Ticks"), Description("How many ticks the poison effect lasts."), UsedImplicitly] public string PoisonDurationTicks { get; set; } = "";
-    }
     public class BerserkSection : PowerProgressionSection
     {
         public override string GetTargetType() => "BerserkPower";
@@ -7349,19 +6799,6 @@ public class BLTAurasModule : MBSubModuleBase
         public override string GetTargetType() => "TauntPower";
         [DisplayName("Taunt Range"), Description("How far (in meters) enemies can be forced to target this hero."), UsedImplicitly] public string TauntRange { get; set; } = "";
         [DisplayName("Max Enemies"), Description("Maximum number of enemies this effect can affect at once."), UsedImplicitly] public string MaxEnemies { get; set; } = "";
-    }
-    public class HealAuraSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "HealAuraPower";
-        [DisplayName("Heal Per Tick"), Description("HP restored each tick."), UsedImplicitly] public string HealPerTick { get; set; } = "";
-        [DisplayName("Heal Range"), Description("How far from the hero (in meters) allies are healed."), UsedImplicitly] public string HealRange { get; set; } = "";
-    }
-    public class DamageAuraSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "DamageAuraPower";
-        [DisplayName("Damage Per Tick"), Description("Damage dealt on each tick of this effect."), UsedImplicitly] public string DamagePerTick { get; set; } = "";
-        [DisplayName("Damage Range"), Description("How far from the hero this damage effect reaches."), UsedImplicitly] public string DamageRange { get; set; } = "";
-        [DisplayName("Max Agents Per Tick"), Description("Caps how many nearby agents this effect can hit per tick, closest first - keeps performance in check in large battles."), UsedImplicitly] public string MaxAgentsPerTick { get; set; } = "";
     }
     public class CurseAuraSection : PowerProgressionSection
     {
@@ -7443,12 +6880,6 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Armor To Ignore (%)"), Description("Percentage of the target's armor ignored by this hit."), UsedImplicitly] public string ArmorToIgnorePercent { get; set; } = "";
     }
 
-    public class BurningStrikeSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "BurningStrikePower";
-        [DisplayName("Fire Damage Per Tick"), Description("Burn damage dealt each tick."), UsedImplicitly] public string FireDamagePerTick { get; set; } = "";
-        [DisplayName("Burn Duration (ticks)"), Description("How many ticks the burn effect lasts."), UsedImplicitly] public string BurnDurationTicks { get; set; } = "";
-    }
 
     public class FrostStrikeSection : PowerProgressionSection
     {
@@ -7473,17 +6904,6 @@ public class BLTAurasModule : MBSubModuleBase
         public override string GetTargetType() => "FearAuraPower";
         [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public string Radius { get; set; } = "";
         [DisplayName("Fear Chance Per Tick (%)"), Description("Chance per tick that a nearby enemy becomes feared."), UsedImplicitly] public string FearChancePercent { get; set; } = "";
-    }
-    public class SlowAuraSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "SlowAuraPower";
-        [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public string Radius { get; set; } = "";
-    }
-    public class WeaknessAuraSection : PowerProgressionSection
-    {
-        public override string GetTargetType() => "WeaknessAuraPower";
-        [DisplayName("Aura Radius"), Description("How far from the hero (in meters) this aura reaches."), UsedImplicitly] public string Radius { get; set; } = "";
-        [DisplayName("Damage Reduction (%)"), Description("Percentage reduction applied to incoming damage while this effect is active."), UsedImplicitly] public string DamageReductionPercent { get; set; } = "";
     }
     public class BattleCryAuraSection : PowerProgressionSection
     {
@@ -7586,12 +7006,9 @@ public class BLTAurasModule : MBSubModuleBase
 
         // ── Sekcje per moc (każda pokazuje tylko swoje właściwości) ──
         // W każdym polu wpisz wartości PO PRZECINKU — jedna liczba na tier (np. 8,12,18). Puste pole = wartość bazowa (bez skalowania).
-        [DisplayName("Poison Strike"), Category("2 - Powers"), PropertyOrder(10), Description("Expand and enter comma-separated values — one per tier (e.g. 8,12,18). Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public PoisonStrikeSection PoisonStrike { get; set; } = new PoisonStrikeSection();
         [DisplayName("Berserk"), Category("2 - Powers"), PropertyOrder(11), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BerserkSection Berserk { get; set; } = new BerserkSection();
         [DisplayName("Last Stand"), Category("2 - Powers"), PropertyOrder(12), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public LastStandSection LastStand { get; set; } = new LastStandSection();
         [DisplayName("Taunt"), Category("2 - Powers"), PropertyOrder(13), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public TauntSection Taunt { get; set; } = new TauntSection();
-        [DisplayName("Heal Aura"), Category("2 - Powers"), PropertyOrder(14), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public HealAuraSection HealAura { get; set; } = new HealAuraSection();
-        [DisplayName("Damage Aura"), Category("2 - Powers"), PropertyOrder(15), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public DamageAuraSection DamageAura { get; set; } = new DamageAuraSection();
         [DisplayName("Curse Aura"), Category("2 - Powers"), PropertyOrder(16), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public CurseAuraSection CurseAura { get; set; } = new CurseAuraSection();
         [DisplayName("Buff Aura"), Category("2 - Powers"), PropertyOrder(17), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BuffAuraSection BuffAura { get; set; } = new BuffAuraSection();
         [DisplayName("Teleport (Passive)"), Category("2 - Powers"), PropertyOrder(18), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public TeleportSection Teleport { get; set; } = new TeleportSection();
@@ -7602,13 +7019,10 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Absorb Health Power"), Category("2 - Powers"), PropertyOrder(23), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public AbsorbHealthSection AbsorbHealth { get; set; } = new AbsorbHealthSection();
         [DisplayName("Reflect Damage Power"), Category("2 - Powers"), PropertyOrder(24), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public ReflectDamageSection ReflectDamage { get; set; } = new ReflectDamageSection();
         [DisplayName("Take Damage Power"), Category("2 - Powers"), PropertyOrder(25), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public TakeDamageSection TakeDamage { get; set; } = new TakeDamageSection();
-        [DisplayName("Burning Strike"), Category("2 - Powers"), PropertyOrder(30), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BurningStrikeSection BurningStrike { get; set; } = new BurningStrikeSection();
         [DisplayName("Frost Strike"), Category("2 - Powers"), PropertyOrder(31), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public FrostStrikeSection FrostStrike { get; set; } = new FrostStrikeSection();
         [DisplayName("Vampirism Strike"), Category("2 - Powers"), PropertyOrder(32), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public VampirismStrikeSection VampirismStrike { get; set; } = new VampirismStrikeSection();
         [DisplayName("Chain Lightning"), Category("2 - Powers"), PropertyOrder(33), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public ChainLightningSection ChainLightning { get; set; } = new ChainLightningSection();
         [DisplayName("Fear Aura"), Category("2 - Powers"), PropertyOrder(34), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public FearAuraSection FearAura { get; set; } = new FearAuraSection();
-        [DisplayName("Slow Aura"), Category("2 - Powers"), PropertyOrder(35), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public SlowAuraSection SlowAura { get; set; } = new SlowAuraSection();
-        [DisplayName("Weakness Aura"), Category("2 - Powers"), PropertyOrder(36), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public WeaknessAuraSection WeaknessAura { get; set; } = new WeaknessAuraSection();
         [DisplayName("Battle Cry Aura"), Category("2 - Powers"), PropertyOrder(37), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BattleCryAuraSection BattleCryAura { get; set; } = new BattleCryAuraSection();
         [DisplayName("Blood Rage"), Category("2 - Powers"), PropertyOrder(38), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public BloodRageSection BloodRage { get; set; } = new BloodRageSection();
         [DisplayName("Shadowstep"), Category("2 - Powers"), PropertyOrder(39), Description("Comma-separated values, one per tier. Empty = no change."), ExpandableObject, Expand, UsedImplicitly] public ShadowstepSection Shadowstep { get; set; } = new ShadowstepSection();
