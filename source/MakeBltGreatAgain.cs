@@ -1863,6 +1863,46 @@ public class BLTGuardModule : MBSubModuleBase
         }
     }
 
+    // Rewards a REAL native couched-lance hit for BLT heroes - does not force the pose, only reacts
+    // to it. Agent.IsDoingPassiveAttack is a read-only query into the native engine (no way to force
+    // entry into the couched state - confirmed via decompile, see docs/superpowers/plans/
+    // 2026-07-19-couched-lance-blt-scoped.md), but it is still true at Mission.RegisterBlow time, and
+    // AttackType.Standard (a thrust) is how the engine itself distinguishes a couched lance hit from a
+    // mount-body Collision hit (Adrenaline's domain) - see HighlightsController.GetHighlightTypeWithId's
+    // "hlid_couched_lance_against_mounted_opponent" check in the decompiled engine source.
+    // Patch aplikowany RĘCZNIE w BLTAurasModule.OnSubModuleLoad (jak AdrenalineChargePatch) - NIE przez
+    // [HarmonyPatch]/PatchAll.
+    internal static class CouchedLanceRewardPatch
+    {
+        // Mirror Mission.RegisterBlow(Agent attacker, Agent victim, WeakGameEntity realHitEntity,
+        //   ref Blow b, ref AttackCollisionData collisionData, in MissionWeapon attackerWeapon)
+        public static void Prefix(Agent attacker, Agent victim, WeakGameEntity realHitEntity, ref Blow b,
+            ref AttackCollisionData collisionData, in MissionWeapon attackerWeapon)
+        {
+            try
+            {
+                var cfg = CouchedLanceConfig.Get();
+                if (cfg == null || !cfg.Enabled) return;
+                if (cfg.DamageMultiplier <= 1f) return;
+                if (attacker == null || !attacker.IsActive()) return;
+                if (attacker.GetAdoptedHero() == null) return;   // BLT heroes only
+                if (!attacker.HasMount) return;                  // mounted only (Phase 1)
+                if (b.AttackType != AgentAttackType.Standard) return;  // thrust, not mount-body Collision
+                if (!attacker.IsDoingPassiveAttack) return;      // real native couched-lance flag
+
+                float mult = cfg.DamageMultiplier;
+                b.InflictedDamage = Math.Max(0, (int)Math.Round(b.InflictedDamage * mult));
+                b.BaseMagnitude *= mult;
+                collisionData.InflictedDamage = Math.Max(0, (int)Math.Round(collisionData.InflictedDamage * mult));
+                collisionData.BaseMagnitude *= mult;
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("CouchedLanceRewardPatch.Prefix failed", ex);
+            }
+        }
+    }
+
     // ======================================================================
     // BLTUpgrade
     // ======================================================================
@@ -3068,6 +3108,7 @@ public class BLTAurasModule : MBSubModuleBase
             // dormant in the DLL; without Register() they never appear in the config UI.
             try { WandererGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Wanderer] Register failed", ex); }
             try { AdrenalineGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Adrenaline] Register failed", ex); }
+            try { CouchedLanceConfig.Register(); } catch (Exception ex) { Log.Exception("[CouchedLance] Register failed", ex); }
             try { HeroBarGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[HeroBar] Register failed", ex); }
             // MBGA - Tournament Loadout NOT registered in 1.3.15 Warsails line: TOR-specific and the
             // fork already provides tournament armor normalization. Class dormant in DLL.
@@ -3132,6 +3173,14 @@ public class BLTAurasModule : MBSubModuleBase
                     harmony.Patch(chargeTarget, prefix: new HarmonyMethod(chargePrefix));
                 else
                     Log.Info($"[AdrenalineCharge] Patch target/prefix not found (target={chargeTarget != null}, prefix={chargePrefix != null})");
+
+                // Couched lance reward — ręcznie raz na Mission.RegisterBlow (jak AdrenalineChargePatch, ten sam target)
+                var couchPrefix = typeof(CouchedLanceRewardPatch).GetMethod(
+                    nameof(CouchedLanceRewardPatch.Prefix), BindingFlags.Static | BindingFlags.Public);
+                if (chargeTarget != null && couchPrefix != null)
+                    harmony.Patch(chargeTarget, prefix: new HarmonyMethod(couchPrefix));
+                else
+                    Log.Info($"[CouchedLance] Patch target/prefix not found (target={chargeTarget != null}, prefix={couchPrefix != null})");
 
                 Log.Info("[BLTAuras] Loaded: PoisonStrike / Berserk / LastStand / Taunt / Auras / Kick / JumpAttack / Teleport / PowerProgression / BannerFix / HumanChild");
             }
@@ -3881,6 +3930,169 @@ public class BLTAurasModule : MBSubModuleBase
 
         public override LocString Description =>
             $"Composed Self-Buff (Beta): +{DamageBonusPercent:0}% dmg, -{DamageReductionPercent:0}% taken";
+    }
+
+    // Cannot force the native couched-lance pose (Agent.IsDoingPassiveAttack/IsPassiveUsageConditionsAreMet
+    // are read-only queries into the engine - see docs/superpowers/plans/
+    // 2026-07-19-couched-lance-attempt-frequency.md). This instead maximizes the odds of the pose
+    // triggering naturally: whenever the hero is mounted, wielding a couch-capable (WideGrip) lance,
+    // and NOT already engaged in melee, it scripts a sustained NeverSlowDown gallop straight at the
+    // nearest enemy - the same conditions (speed + straight line + weapon) the engine itself checks.
+    // Hands control straight back to normal AI the moment an enemy is close (FollowCombat.HasEnemyNear),
+    // same arbitration idiom as DuelMoveAndFight/FollowCombat.EngageOrFollow elsewhere in this file.
+    [DisplayName("Lancer Charge (Beta)"),
+     Description("PILOT/BETA - cannot force the couched-lance pose (that's native-engine-only), but this maximizes the odds: whenever the hero is mounted with a couch-capable lance and no enemy is close, it scripts a full-speed straight charge at the nearest enemy - the exact conditions the engine's own couch check wants. Hands back to normal AI the instant melee range is reached, so normal fighting is unaffected."),
+     UsedImplicitly]
+    public class LancerChargePower : DurationMissionHeroPowerDefBase, IHeroPowerPassive
+    {
+        [DisplayName("Search Range (meters)"), Description("How far the hero will look for an enemy to charge at."), PropertyOrder(1), UsedImplicitly]
+        public float SearchRange { get; set; } = 60f;
+
+        [DisplayName("Update Interval (seconds)"), Description("How often the charge target/decision re-evaluates."), PropertyOrder(2), UsedImplicitly]
+        public float UpdateIntervalSeconds { get; set; } = 0.5f;
+
+        [DisplayName("Auto-Draw Lance"), Description("If the hero is carrying a couch-capable lance but has a different weapon in hand, automatically draw the lance when about to charge (only when no enemy is close, so it doesn't interrupt melee)."), PropertyOrder(3), UsedImplicitly]
+        public bool AutoDrawLance { get; set; } = true;
+
+        [DisplayName("Push Infantry In Path"), Description("While actively charging, foot soldiers the horse gets very close to are shoved aside instead of bogging the charge down - keeps momentum through a crowd."), PropertyOrder(4), UsedImplicitly]
+        public bool PushInfantryInPath { get; set; } = true;
+
+        [DisplayName("Push Range (meters)"), Description("How close a foot soldier needs to be to the horse to get shoved (only while charging)."), PropertyOrder(5), UsedImplicitly]
+        public float PushRange { get; set; } = 1.2f;
+
+        [DisplayName("Push Chance (%)"), Description("Chance per push-check that a foot soldier in range actually gets knocked back."), PropertyOrder(6), UsedImplicitly]
+        public float PushChancePercent { get; set; } = 70f;
+
+        void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
+            => OnActivation(hero, handlers);
+
+        protected override void OnActivation(Hero hero, PowerHandler.Handlers handlers,
+            Agent agent = null, DeactivationHandler deactivationHandler = null)
+        {
+            float searchRange = SearchRange;
+            float updateInterval = UpdateIntervalSeconds;
+            bool autoDrawLance = AutoDrawLance;
+            bool pushInfantryInPath = PushInfantryInPath;
+            float pushRange = PushRange;
+            float pushChancePercent = PushChancePercent;
+            float lastTick = -999f;
+            bool charging = false;
+
+            bool IsWideGripLance(MissionWeapon w) => !w.IsEmpty && w.CurrentUsageItem?.WeaponFlags.HasAnyFlag(WeaponFlags.WideGrip) == true;
+
+            handlers.OnSlowTick += dt =>
+            {
+                var a = hero.GetAgent();
+                if (a == null || !a.IsActive() || !a.HasMount) { charging = false; return; }
+
+                float now = Mission.Current?.CurrentTime ?? 0f;
+                if (now - lastTick < updateInterval) return;
+                lastTick = now;
+
+                bool hasLance = IsWideGripLance(a.WieldedWeapon);
+                if (!hasLance && autoDrawLance && !FollowCombat.HasEnemyNear(a, FollowCombat.EngageRange))
+                {
+                    try
+                    {
+                        for (var wi = EquipmentIndex.WeaponItemBeginSlot; wi < EquipmentIndex.NumAllWeaponSlots; wi++)
+                        {
+                            if (IsWideGripLance(a.Equipment[wi]))
+                            {
+                                a.TryToWieldWeaponInSlot(wi, Agent.WeaponWieldActionType.WithAnimation, isWieldedOnSpawn: false);
+                                break;
+                            }
+                        }
+                    }
+                    catch { }
+                    return; // wait for next tick - wielding takes a moment
+                }
+                if (!hasLance) { if (charging) { a.SetAutomaticTargetSelection(true); a.DisableScriptedMovement(); charging = false; } return; }
+
+                if (FollowCombat.HasEnemyNear(a, FollowCombat.EngageRange))
+                {
+                    if (charging) { a.SetAutomaticTargetSelection(true); a.DisableScriptedMovement(); charging = false; }
+                    return;
+                }
+
+                try
+                {
+                    Agent nearestEnemy = null;
+                    float bestDistSq = searchRange * searchRange;
+                    foreach (var other in Mission.Current?.Agents ?? Enumerable.Empty<Agent>())
+                    {
+                        if (other == null || !other.IsActive() || other.IsMount || !other.IsEnemyOf(a)) continue;
+                        float distSq = (other.Position - a.Position).LengthSquared;
+                        if (distSq < bestDistSq) { bestDistSq = distSq; nearestEnemy = other; }
+                    }
+
+                    if (nearestEnemy == null) { if (charging) { a.SetAutomaticTargetSelection(true); a.DisableScriptedMovement(); charging = false; } return; }
+
+                    a.SetMaximumSpeedLimit(-1f, false);
+                    var pos = nearestEnemy.GetWorldPosition();
+                    a.SetScriptedPosition(ref pos, false, Agent.AIScriptedFrameFlags.NeverSlowDown);
+                    a.SetTargetAgent(nearestEnemy);
+                    charging = true;
+                }
+                catch { }
+            };
+
+            // Runs every mission tick (not the slow 0.5s decision tick) so a fast-moving horse
+            // doesn't bog down mid-charge waiting for the next decision cycle. Only active while
+            // actually charging - normal riding/fighting is never affected.
+            var lastPush = new Dictionary<Agent, float>();
+            float lastPushSweep = -999f;
+            handlers.OnMissionTick += dt =>
+            {
+                if (!pushInfantryInPath || !charging) return;
+                var a = hero.GetAgent();
+                if (a == null || !a.IsActive()) return;
+                float now = Mission.Current?.CurrentTime ?? 0f;
+                if (now - lastPushSweep < 0.15f) return;
+                lastPushSweep = now;
+
+                try
+                {
+                    var nearbyBuffer = new MBList<Agent>();
+                    var inRange = Mission.Current?.GetNearbyAgents(a.Position.AsVec2, pushRange, nearbyBuffer)
+                        ?.Where(o => o != null && o.IsActive() && !o.IsMount && o != a && o.IsEnemyOf(a));
+                    if (inRange == null) return;
+
+                    foreach (var target in inRange)
+                    {
+                        if (lastPush.TryGetValue(target, out float last) && now - last < 1f) continue;
+                        if (MBRandom.RandomFloat * 100f >= pushChancePercent) { lastPush[target] = now; continue; }
+                        lastPush[target] = now;
+
+                        var dir = Vec3.Up;
+                        var blow = new Blow(a.Index)
+                        {
+                            AttackType = AgentAttackType.Standard, DamageType = DamageTypes.Blunt,
+                            BoneIndex = target.Monster.HeadLookDirectionBoneIndex, GlobalPosition = target.Position,
+                            BaseMagnitude = 0f, InflictedDamage = 0,
+                            SwingDirection = dir, Direction = dir, DamageCalculated = true,
+                            VictimBodyPart = BoneBodyPartType.Chest,
+                        };
+                        var hitBehavior = new HitBehavior { KnockBackChancePercent = 100f };
+                        blow.BlowFlag = hitBehavior.AddFlags(target, blow.BlowFlag);
+                        target.RegisterBlow(blow, AgentHelpers.CreateCollisionDataFromBlow(a, target, blow));
+                    }
+                }
+                catch { }
+            };
+
+            void Cleanup()
+            {
+                var a = hero.GetAgent();
+                if (a == null || !a.IsActive() || !charging) return;
+                try { a.SetAutomaticTargetSelection(true); a.DisableScriptedMovement(); } catch { }
+                charging = false;
+            }
+            if (deactivationHandler != null) deactivationHandler.OnDeactivate += _ => Cleanup();
+            handlers.OnMissionOver += Cleanup;
+        }
+
+        public override LocString Description =>
+            $"Lancer Charge (Beta): charges nearest enemy at full speed with a couch-capable lance when clear (r{SearchRange:0}m)";
     }
 
 
@@ -8550,6 +8762,20 @@ public class BLTAurasModule : MBSubModuleBase
 
         [DisplayName("Mounted Charge Damage Multiplier"), Description("Charge damage multiplier while mounted and active (3.0 = +300%)"), UsedImplicitly]
         public float MountedChargeDamageMultiplier { get; set; } = 3f;
+    }
+
+    [DisplayName("MBGA - Couched Lance")]
+    public class CouchedLanceConfig
+    {
+        private const string ID = "MBGA - Couched Lance";
+        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(CouchedLanceConfig));
+        internal static CouchedLanceConfig Get() => ActionManager.GetGlobalConfig<CouchedLanceConfig>(ID);
+
+        [DisplayName("Enabled"), Description("Master switch. Rewards a REAL native couched-lance hit for BLT heroes (mounted, moving fast, lance thrust the game itself recognizes as a couch) - does not force the pose, only reacts to it when it naturally happens."), UsedImplicitly]
+        public bool Enabled { get; set; } = true;
+
+        [DisplayName("Damage Multiplier"), Description("Bonus damage multiplier applied on top of a real couched-lance hit (2.0 = +100%). 1.0 or less disables the bonus."), UsedImplicitly]
+        public float DamageMultiplier { get; set; } = 2f;
     }
 
     [DisplayName("MBGA - Hero Bar")]
