@@ -1548,6 +1548,33 @@ public class BLTGuardModule : MBSubModuleBase
         public static void Clear() => bonuses.Clear();
     }
 
+    // Per-hero couched-lance tuning set by LancerChargePower.OnSlowTick (refreshed every tick while
+    // the power is active, so no separate registration/cleanup lifecycle is needed - a hero without
+    // the power active simply never appears here). Read by CouchedLanceRewardPatch/StayCouchedPatch -
+    // both patches are always active but do nothing for a hero not in this tracker, so the whole
+    // feature lives entirely on the Lancer Charge power with no separate global on/off config.
+    internal readonly struct LancerChargeCouchSettings
+    {
+        public readonly float DamageMultiplier;
+        public readonly float StayCouchedOnKillChancePercent;
+        public LancerChargeCouchSettings(float damageMultiplier, float stayCouchedOnKillChancePercent)
+        {
+            DamageMultiplier = damageMultiplier;
+            StayCouchedOnKillChancePercent = stayCouchedOnKillChancePercent;
+        }
+    }
+    internal static class LancerChargeCouchTracker
+    {
+        private static readonly Dictionary<Agent, LancerChargeCouchSettings> settings = new Dictionary<Agent, LancerChargeCouchSettings>();
+        public static void Set(Agent a, float damageMultiplier, float stayCouchedOnKillChancePercent)
+        {
+            if (a != null) settings[a] = new LancerChargeCouchSettings(damageMultiplier, stayCouchedOnKillChancePercent);
+        }
+        public static void Remove(Agent a) { if (a != null) settings.Remove(a); }
+        public static bool TryGet(Agent a, out LancerChargeCouchSettings s) => settings.TryGetValue(a, out s);
+        public static void Clear() => settings.Clear();
+    }
+
     // Real aura damage buff/debuff for ComposedAuraPower, reaching ANY agent (regular troops
     // included, not just other adopted heroes) - unlike ComposedSelfBuffPower, which is limited to
     // the owning hero's own agent because PowerHandler.Handlers.OnDoDamage/OnTakeDamage only fire
@@ -1881,16 +1908,17 @@ public class BLTGuardModule : MBSubModuleBase
         {
             try
             {
-                var cfg = CouchedLanceConfig.Get();
-                if (cfg == null || !cfg.Enabled) return;
-                if (cfg.DamageMultiplier <= 1f) return;
                 if (attacker == null || !attacker.IsActive()) return;
                 if (attacker.GetAdoptedHero() == null) return;   // BLT heroes only
                 if (!attacker.HasMount) return;                  // mounted only (Phase 1)
                 if (b.AttackType != AgentAttackType.Standard) return;  // thrust, not mount-body Collision
                 if (!attacker.IsDoingPassiveAttack) return;      // real native couched-lance flag
 
-                float mult = cfg.DamageMultiplier;
+                // Always-on: values live entirely on the Lancer Charge power. No effect at all for
+                // heroes without that power active.
+                if (!LancerChargeCouchTracker.TryGet(attacker, out var lancerSettings)) return;
+                float mult = lancerSettings.DamageMultiplier;
+                if (mult <= 1f) return;
                 b.InflictedDamage = Math.Max(0, (int)Math.Round(b.InflictedDamage * mult));
                 b.BaseMagnitude *= mult;
                 collisionData.InflictedDamage = Math.Max(0, (int)Math.Round(collisionData.InflictedDamage * mult));
@@ -1899,6 +1927,44 @@ public class BLTGuardModule : MBSubModuleBase
             catch (Exception ex)
             {
                 Log.Exception("CouchedLanceRewardPatch.Prefix failed", ex);
+            }
+        }
+    }
+
+    // Real "stay couched on kill" mechanic, confirmed against a decompile of TOR_Core.dll's Grail
+    // Knight "Knightly Charge" keystone - NOT a hack on the read-only IsDoingPassiveAttack flag.
+    // The engine calls AgentApplyDamageModel.DecidePassiveAttackCollisionReaction(attacker, defender,
+    // isFatalHit) after every couched-lance hit to decide what happens to the weapon/pose next
+    // (MeleeCollisionReaction.Bounced = couch resets; .SlicedThrough = couch continues). The fork's
+    // BLTAgentApplyDamageModel (BLTAdoptAHero.cs:256) already wraps/decorates this model and is
+    // registered as the active one at mission start (BLTAdoptAHero.cs:226,
+    // gameStarterObject.AddModel(new BLTAgentApplyDamageModel(...))) - so a Postfix on ITS
+    // DecidePassiveAttackCollisionReaction is the live decision point, same as TOR's own override,
+    // just via Harmony instead of subclassing. Patch aplikowany RĘCZNIE w BLTAurasModule.OnSubModuleLoad
+    // (jak AdrenalineChargePatch/CouchedLanceRewardPatch) - NIE przez [HarmonyPatch]/PatchAll.
+    internal static class StayCouchedPatch
+    {
+        public static void Postfix(Agent attacker, Agent defender, bool isFatalHit, ref MeleeCollisionReaction __result)
+        {
+            try
+            {
+                if (!isFatalHit) return;
+                if (__result != MeleeCollisionReaction.Bounced) return;
+                if (attacker == null || !attacker.IsActive()) return;
+                if (attacker.GetAdoptedHero() == null) return;   // BLT heroes only
+
+                // Always-on: values live entirely on the Lancer Charge power. No effect at all for
+                // heroes without that power active.
+                if (!LancerChargeCouchTracker.TryGet(attacker, out var lancerSettings)) return;
+                float chance = lancerSettings.StayCouchedOnKillChancePercent;
+                if (chance <= 0f) return;
+
+                if (MBRandom.RandomFloat * 100f < chance)
+                    __result = MeleeCollisionReaction.SlicedThrough;
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("StayCouchedPatch.Postfix failed", ex);
             }
         }
     }
@@ -2647,450 +2713,6 @@ public class BLTClanGoldModule : MBSubModuleBase
 
 
     // ======================================================================
-    // BLTGrail
-    // ======================================================================
-
-// ════════════════════════════════════════════════════════════════════════════
-    // USTAWIENIA JEDNEGO QUESTA (Weapon lub Armor)
-    // ════════════════════════════════════════════════════════════════════════════
-
-    [DisplayName("Grail Quest Settings")]
-    [TypeConverter(typeof(ExpandableObjectConverter))]
-    public class GrailQuestSettings
-    {
-        [DisplayName("Enabled"),
-         Description("Czy ten quest jest aktywny?"),
-         PropertyOrder(1)]
-        public bool Enabled { get; set; } = true;
-
-        [DisplayName("Quest Name"),
-         Description("Quest name shown in chat messages."),
-         PropertyOrder(2)]
-        public string QuestName { get; set; } = "Grail Quest";
-
-        [DisplayName("Daily Trigger Chance (0-1)"),
-         Description("Daily chance for the quest to appear. 0.02 = 2%."),
-         Range(0.0, 1.0), Editor(typeof(SliderFloatEditor), typeof(SliderFloatEditor)),
-         PropertyOrder(3)]
-        public float DailyChance { get; set; } = 0.02f;
-
-        [DisplayName("Battles Required"),
-         Description("Number of battles the hero must survive to complete the quest."),
-         PropertyOrder(4)]
-        public int BattlesRequired { get; set; } = 5;
-
-        [DisplayName("Count Player Battles"),
-         Description("When true — quest only counts battles where the streamer (MainHero) participates."),
-         PropertyOrder(5)]
-        public bool CountPlayerBattles { get; set; } = true;
-
-        [DisplayName("Use Hero Class Item"),
-         Description("When true — reward is matched to the hero's class (archer gets bow, warrior gets sword, etc.). Ignores Item Type field."),
-         PropertyOrder(6)]
-        public bool UseHeroClassItem { get; set; } = true;
-
-        [DisplayName("Item Type"),
-         Description("Reward type when UseHeroClassItem = false."),
-         PropertyOrder(7)]
-        public RewardHelpers.RewardType ItemType { get; set; } = RewardHelpers.RewardType.Weapon;
-
-        [DisplayName("Item Tier (1-6)"),
-         Description("Reward item tier. 6 = best available with modifier (like !smithweapon)."),
-         Range(1, 6),
-         PropertyOrder(8)]
-        public int ItemTier { get; set; } = 6;
-
-        [DisplayName("Item Power"),
-         Description("Reward item power multiplier — same as the slider in smithweapon."),
-         Range(0.1, 5.0), Editor(typeof(SliderFloatEditor), typeof(SliderFloatEditor)),
-         PropertyOrder(9)]
-        public float ItemPower { get; set; } = 1.6f;
-
-        [DisplayName("Item Name"),
-         Description("Name of the reward item. {ITEMNAME} = base item name."),
-         PropertyOrder(10)]
-        public string ItemName { get; set; } = "Holy Grail {ITEMNAME}";
-
-        [DisplayName("Quest Start Message"),
-         Description("Message shown when the quest starts. {hero} = hero name, {battles} = battles required, {quest} = quest name."),
-         PropertyOrder(10)]
-        public string QuestStartMessage { get; set; } =
-            "⚔ {quest}! {hero} must survive {battles} battles to claim a legendary item!";
-
-        [DisplayName("Quest Progress Message"),
-         Description("Message shown after each battle. {hero}, {current}, {required}, {quest}."),
-         PropertyOrder(11)]
-        public string QuestProgressMessage { get; set; } =
-            "🛡 [{quest}] {hero} survived a battle! Progress: {current}/{required}";
-
-        [DisplayName("Quest Complete Message"),
-         Description("Message shown on quest completion. {hero}, {quest}."),
-         PropertyOrder(12)]
-        public string QuestCompleteMessage { get; set; } =
-            "🏆 {hero} completed {quest} and claimed a legendary item!";
-
-        [DisplayName("Quest Failed Message"),
-         Description("Message shown when the hero dies. {hero}, {quest}."),
-         PropertyOrder(13)]
-        public string QuestFailedMessage { get; set; } =
-            "💀 {hero} has fallen! {quest} is lost...";
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // GLOBALNY CONFIG — 2 oddzielne questy w BLTConfigure
-    // ════════════════════════════════════════════════════════════════════════════
-
-    [DisplayName("MBGA - Grail")]
-    public class GrailConfig
-    {
-        private const string ID = "MBGA - Grail";
-        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(GrailConfig));
-        internal static GrailConfig Get() => ActionManager.GetGlobalConfig<GrailConfig>(ID);
-
-        [DisplayName("Weapon Quest"),
-         Description("Quest that rewards a legendary weapon."),
-         PropertyOrder(1)]
-        public GrailQuestSettings WeaponQuest { get; set; } = new GrailQuestSettings
-        {
-            QuestName    = "Holy Blade Quest",
-            ItemType     = RewardHelpers.RewardType.Weapon,
-            ItemName     = "Holy Grail Blade",
-            QuestCompleteMessage = "🏆 {hero} has claimed the Holy Grail Blade!",
-            QuestFailedMessage   = "💀 {hero} has fallen! The Holy Blade Quest is lost...",
-        };
-
-        [DisplayName("Armor Quest"),
-         Description("Quest that rewards legendary armor."),
-         PropertyOrder(2)]
-        public GrailQuestSettings ArmorQuest { get; set; } = new GrailQuestSettings
-        {
-            QuestName    = "Holy Armor Quest",
-            ItemType     = RewardHelpers.RewardType.Armor,
-            ItemName     = "Holy Grail Armor",
-            QuestCompleteMessage = "🏆 {hero} has claimed the Holy Grail Armor!",
-            QuestFailedMessage   = "💀 {hero} has fallen! The Holy Armor Quest is lost...",
-        };
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // STAN AKTYWNEGO QUESTA
-    // ════════════════════════════════════════════════════════════════════════════
-
-    public class GrailActiveQuest
-    {
-        public Hero             Hero            { get; set; }
-        public GrailQuestSettings Settings      { get; set; }
-        public int              BattlesSurvived { get; set; }
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // MODULE
-    // ════════════════════════════════════════════════════════════════════════════
-
-    public class BLTGrailModule : MBSubModuleBase
-    {
-        public BLTGrailModule() { try { GrailConfig.Register(); } catch (Exception ex) { Log.Exception("[Grail] Register failed", ex); } }
-
-        protected override void OnSubModuleLoad()
-        {
-            base.OnSubModuleLoad();
-            Log.Info("[BLTGrail] Loaded.");
-        }
-
-        protected override void OnGameStart(Game game, IGameStarter gameStarter)
-        {
-            base.OnGameStart(game, gameStarter);
-            if (gameStarter is CampaignGameStarter cs)
-                cs.AddBehavior(new GrailCampaignBehavior());
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // CAMPAIGN BEHAVIOR
-    // ════════════════════════════════════════════════════════════════════════════
-
-    public class GrailCampaignBehavior : CampaignBehaviorBase
-    {
-        public static GrailCampaignBehavior Current { get; private set; }
-
-        // Two independent slots — weapon and armor quests can run simultaneously
-        private GrailActiveQuest _weaponQuest;
-        private GrailActiveQuest _armorQuest;
-
-        public GrailActiveQuest WeaponQuest => _weaponQuest;
-        public GrailActiveQuest ArmorQuest  => _armorQuest;
-
-        public override void RegisterEvents()
-        {
-            Current = this;
-            CampaignEvents.DailyTickEvent.AddNonSerializedListener(this, OnDailyTick);
-            CampaignEvents.MapEventEnded.AddNonSerializedListener(this, OnMapEventEnded);
-            CampaignEvents.HeroKilledEvent.AddNonSerializedListener(this, OnHeroKilled);
-        }
-
-        public override void SyncData(IDataStore dataStore) { }
-
-        // ── Daily tick ────────────────────────────────────────────────────────
-
-        private void OnDailyTick()
-        {
-            var cfg = GrailConfig.Get();
-            if (cfg == null) return;
-
-            // Tylko jeden quest na raz — jeśli cokolwiek aktywne, nie startuj kolejnego
-            if (_weaponQuest == null && _armorQuest == null)
-            {
-                // Losuj który typ questa odpali (żeby nie faworyzować broni)
-                if (MBRandom.RandomInt(2) == 0)
-                {
-                    TryTriggerQuest(cfg.WeaponQuest, ref _weaponQuest);
-                    if (_weaponQuest == null)
-                        TryTriggerQuest(cfg.ArmorQuest, ref _armorQuest);
-                }
-                else
-                {
-                    TryTriggerQuest(cfg.ArmorQuest, ref _armorQuest);
-                    if (_armorQuest == null)
-                        TryTriggerQuest(cfg.WeaponQuest, ref _weaponQuest);
-                }
-            }
-
-            // Pokaż postęp aktywnego questa w overlaycie
-            ShowProgress(_weaponQuest);
-            ShowProgress(_armorQuest);
-        }
-
-        private static void TryTriggerQuest(GrailQuestSettings settings, ref GrailActiveQuest slot)
-        {
-            if (!settings.Enabled) return;
-            if (slot != null) return;  // już aktywny
-
-            if (MBRandom.RandomFloat > settings.DailyChance) return;
-
-            var candidates = Hero.AllAliveHeroes
-                .Where(h => h != null && h.IsAdopted())
-                .ToList();
-            if (candidates.Count == 0) return;
-
-            var chosen = candidates[MBRandom.RandomInt(candidates.Count)];
-            slot = new GrailActiveQuest
-            {
-                Hero            = chosen,
-                Settings        = settings,
-                BattlesSurvived = 0,
-            };
-
-            var msg = settings.QuestStartMessage
-                .Replace("{quest}",   settings.QuestName)
-                .Replace("{hero}",    chosen.FirstName?.Raw() ?? chosen.Name?.Raw())
-                .Replace("{battles}", settings.BattlesRequired.ToString());
-
-            Notify(msg, chosen);
-            Log.Info($"[BLTGrail] Quest '{settings.QuestName}' started for {chosen.Name}");
-        }
-
-        private static void ShowProgress(GrailActiveQuest quest)
-        {
-            if (quest == null) return;
-            var msg = $"[{quest.Settings.QuestName}] {quest.Hero?.FirstName?.Raw()}: " +
-                      $"{quest.BattlesSurvived}/{quest.Settings.BattlesRequired} battles";
-            Log.ShowInformation(msg, quest.Hero?.CharacterObject);
-        }
-
-        // ── MapEvent ended ────────────────────────────────────────────────────
-
-        private void OnMapEventEnded(MapEvent mapEvent)
-        {
-            ProcessQuestBattle(mapEvent, ref _weaponQuest);
-            ProcessQuestBattle(mapEvent, ref _armorQuest);
-        }
-
-        private void ProcessQuestBattle(MapEvent mapEvent, ref GrailActiveQuest slot)
-        {
-            if (slot == null) return;
-            var hero = slot.Hero;
-            if (hero == null || !hero.IsAlive) return;
-
-            // Liczymy TYLKO bitwy w których bierze udział MainHero (streamer)
-            if (!mapEvent.IsPlayerMapEvent) return;
-
-            bool participated = mapEvent.InvolvedParties
-                .Any(p => p?.LeaderHero == hero
-                       || p?.MemberRoster?.Contains(hero.CharacterObject) == true);
-            if (!participated) return;
-
-            slot.BattlesSurvived++;
-            Log.Info($"[BLTGrail] '{slot.Settings.QuestName}' {hero.Name}: " +
-                     $"{slot.BattlesSurvived}/{slot.Settings.BattlesRequired}");
-
-            if (slot.BattlesSurvived >= slot.Settings.BattlesRequired)
-            {
-                CompleteQuest(ref slot);
-            }
-            else
-            {
-                var msg = slot.Settings.QuestProgressMessage
-                    .Replace("{quest}",    slot.Settings.QuestName)
-                    .Replace("{hero}",     hero.FirstName?.Raw())
-                    .Replace("{current}",  slot.BattlesSurvived.ToString())
-                    .Replace("{required}", slot.Settings.BattlesRequired.ToString());
-                Notify(msg, hero);
-            }
-        }
-
-        // ── Hero killed ───────────────────────────────────────────────────────
-
-        private void OnHeroKilled(Hero victim, Hero killer,
-            TaleWorlds.CampaignSystem.Actions.KillCharacterAction.KillCharacterActionDetail detail,
-            bool showNotification)
-        {
-            FailQuestIfVictim(victim, ref _weaponQuest);
-            FailQuestIfVictim(victim, ref _armorQuest);
-        }
-
-        private static void FailQuestIfVictim(Hero victim, ref GrailActiveQuest slot)
-        {
-            if (slot == null || slot.Hero != victim) return;
-            var msg = slot.Settings.QuestFailedMessage
-                .Replace("{quest}", slot.Settings.QuestName)
-                .Replace("{hero}",  victim.FirstName?.Raw());
-            Notify(msg, victim);
-            Log.Info($"[BLTGrail] Quest '{slot.Settings.QuestName}' failed — {victim.Name} killed.");
-            slot = null;
-        }
-
-        // ── Nagroda ───────────────────────────────────────────────────────────
-
-        private static void CompleteQuest(ref GrailActiveQuest slot)
-        {
-            var hero     = slot.Hero;
-            var settings = slot.Settings;
-            slot = null;  // wyczyść przed GenerateReward (w razie wyjątku)
-
-            try
-            {
-                var heroClass = BLTAdoptAHeroCampaignBehavior.Current?.GetClass(hero);
-                // tier > 5 triggers custom modifier generation (same as !smithweapon passing tier=6)
-                int tier = settings.ItemTier >= 6 ? 6 : Math.Max(0, settings.ItemTier - 1);
-                var modifier = GetBLTModifiers();
-
-                // GenerateRewardType(Weapon) już używa heroClass wewnętrznie — nie nadpisuj ItemType
-                // Armor Quest zostaje Armor, Weapon Quest dobiera broń do klasy bohatera
-                var rewardType = settings.ItemType;
-
-                var (item, mod, itemSlot) = RewardHelpers.GenerateRewardType(
-                    rewardType, tier, hero, heroClass,
-                    allowDuplicates: true,
-                    modifierDef: modifier,
-                    customItemName: string.IsNullOrWhiteSpace(settings.ItemName) ? null : settings.ItemName,
-                    customItemPower: settings.ItemPower);
-
-                // Jeśli nie znaleziono itemka z klasą, spróbuj bez klasy
-                if (item == null && heroClass != null)
-                    (item, mod, itemSlot) = RewardHelpers.GenerateRewardType(
-                        rewardType, tier, hero, null,
-                        allowDuplicates: true, modifierDef: modifier,
-                        customItemName: string.IsNullOrWhiteSpace(settings.ItemName) ? null : settings.ItemName,
-                        customItemPower: settings.ItemPower);
-
-                if (item == null)
-                {
-                    Log.Error($"[BLTGrail] Could not generate reward for {hero.Name}");
-                    return;
-                }
-
-                // Najpierw zarejestruj item przez BLT (dodaje do storage)
-                RewardHelpers.AssignCustomReward(hero, item, mod, itemSlot);
-
-                // Force-equip: Grail reward goes directly into the slot even if ShouldReplaceItem would refuse
-                string reward = item.Name?.ToString() ?? "Holy Grail Item";
-                if (itemSlot != EquipmentIndex.None)
-                {
-                    try
-                    {
-                        hero.BattleEquipment[itemSlot] = new EquipmentElement(item, mod);
-                        hero.CivilianEquipment[itemSlot] = new EquipmentElement(item, mod);
-                    }
-                    catch { }
-                }
-                else
-                {
-                    // Brak konkretnego slotu — szukaj pierwszego pasującego wolnego lub najsłabszego
-                    for (var idx = EquipmentIndex.WeaponItemBeginSlot; idx < EquipmentIndex.NumAllWeaponSlots; idx++)
-                    {
-                        var current = hero.BattleEquipment[idx];
-                        if (current.IsEmpty || (!BLTAdoptAHeroCampaignBehavior.Current
-                                .GetCustomItems(hero).Any(ci => ci.Item == current.Item)))
-                        {
-                            try
-                            {
-                                hero.BattleEquipment[idx] = new EquipmentElement(item, mod);
-                                hero.CivilianEquipment[idx] = new EquipmentElement(item, mod);
-                                break;
-                            }
-                            catch { }
-                        }
-                    }
-                }
-
-                var msg = settings.QuestCompleteMessage
-                    .Replace("{quest}", settings.QuestName)
-                    .Replace("{hero}",  hero.FirstName?.Raw())
-                    + $" [{reward}]";
-
-                Notify(msg, hero);
-                Log.Info($"[BLTGrail] Quest '{settings.QuestName}' complete! {hero.Name} received: {reward}");
-            }
-            catch (Exception ex)
-            {
-                Log.Exception("[BLTGrail] CompleteQuest failed", ex);
-            }
-        }
-
-        // ── Helpers ───────────────────────────────────────────────────────────
-
-        // Pobiera CustomRewardModifiers z BLTAdoptAHeroModule.CommonConfig (internal)
-        // — ten sam modifier co !smithweapon używa
-        private static RandomItemModifierDef GetBLTModifiers()
-        {
-            try
-            {
-                var moduleType = typeof(BLTAdoptAHeroCampaignBehavior).Assembly
-                    .GetTypes().FirstOrDefault(t => t.Name == "BLTAdoptAHeroModule");
-                var prop = moduleType?.GetProperty("CommonConfig",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                var commonConfig = prop?.GetValue(null);
-                var modProp = commonConfig?.GetType()
-                    .GetProperty("CustomRewardModifiers",
-                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                return modProp?.GetValue(commonConfig) as RandomItemModifierDef
-                    ?? new RandomItemModifierDef();
-            }
-            catch { return new RandomItemModifierDef(); }
-        }
-
-        private static void Notify(string message, Hero hero = null)
-        {
-            Log.ShowInformation(message, hero?.CharacterObject);
-            try
-            {
-                var serviceType = Type.GetType("BannerlordTwitch.Twitch.TwitchService, BannerlordTwitch");
-                var service = serviceType
-                    ?.GetProperty("Current", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?.GetValue(null);
-                var bot = service?.GetType()
-                    .GetField("bot", BindingFlags.Instance | BindingFlags.NonPublic)
-                    ?.GetValue(service);
-                bot?.GetType()
-                    .GetMethod("SendChat", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?.Invoke(bot, new object[] { new[] { message } });
-            }
-            catch { }
-        }
-    }
-
-
-    // ======================================================================
     // BLTAuras
     // ======================================================================
 
@@ -3108,7 +2730,6 @@ public class BLTAurasModule : MBSubModuleBase
             // dormant in the DLL; without Register() they never appear in the config UI.
             try { WandererGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Wanderer] Register failed", ex); }
             try { AdrenalineGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Adrenaline] Register failed", ex); }
-            try { CouchedLanceConfig.Register(); } catch (Exception ex) { Log.Exception("[CouchedLance] Register failed", ex); }
             try { HeroBarGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[HeroBar] Register failed", ex); }
             // MBGA - Tournament Loadout NOT registered in 1.3.15 Warsails line: TOR-specific and the
             // fork already provides tournament armor normalization. Class dormant in DLL.
@@ -3181,6 +2802,15 @@ public class BLTAurasModule : MBSubModuleBase
                     harmony.Patch(chargeTarget, prefix: new HarmonyMethod(couchPrefix));
                 else
                     Log.Info($"[CouchedLance] Patch target/prefix not found (target={chargeTarget != null}, prefix={couchPrefix != null})");
+
+                // Stay Couched on kill — ręcznie raz na BLTAgentApplyDamageModel.DecidePassiveAttackCollisionReaction
+                var stayCouchedTarget = AccessTools.Method(typeof(BLTAgentApplyDamageModel), nameof(BLTAgentApplyDamageModel.DecidePassiveAttackCollisionReaction));
+                var stayCouchedPostfix = typeof(StayCouchedPatch).GetMethod(
+                    nameof(StayCouchedPatch.Postfix), BindingFlags.Static | BindingFlags.Public);
+                if (stayCouchedTarget != null && stayCouchedPostfix != null)
+                    harmony.Patch(stayCouchedTarget, postfix: new HarmonyMethod(stayCouchedPostfix));
+                else
+                    Log.Info($"[StayCouched] Patch target/postfix not found (target={stayCouchedTarget != null}, postfix={stayCouchedPostfix != null})");
 
                 Log.Info("[BLTAuras] Loaded: PoisonStrike / Berserk / LastStand / Taunt / Auras / Kick / JumpAttack / Teleport / PowerProgression / BannerFix / HumanChild");
             }
@@ -3963,6 +3593,12 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Push Chance (%)"), Description("Chance per push-check that a foot soldier in range actually gets knocked back."), PropertyOrder(6), UsedImplicitly]
         public float PushChancePercent { get; set; } = 70f;
 
+        [DisplayName("Couch Damage Multiplier"), Description("Bonus damage multiplier on a real couched-lance hit for heroes with THIS power (overrides the global MBGA - Couched Lance value). 2.0 = +100%. 1.0 or less disables the bonus for this power."), PropertyOrder(7), UsedImplicitly]
+        public float CouchDamageMultiplier { get; set; } = 2f;
+
+        [DisplayName("Stay Couched On Kill Chance (%)"), Description("Chance that a killing couched-lance hit does NOT reset the couch for heroes with THIS power (overrides the global MBGA - Couched Lance value). 0 = vanilla behavior (always resets)."), PropertyOrder(8), UsedImplicitly]
+        public float StayCouchedOnKillChancePercent { get; set; } = 60f;
+
         void IHeroPowerPassive.OnHeroJoinedBattle(Hero hero, PowerHandler.Handlers handlers)
             => OnActivation(hero, handlers);
 
@@ -3975,6 +3611,8 @@ public class BLTAurasModule : MBSubModuleBase
             bool pushInfantryInPath = PushInfantryInPath;
             float pushRange = PushRange;
             float pushChancePercent = PushChancePercent;
+            float couchDamageMultiplier = CouchDamageMultiplier;
+            float stayCouchedOnKillChancePercent = StayCouchedOnKillChancePercent;
             float lastTick = -999f;
             bool charging = false;
 
@@ -3984,6 +3622,8 @@ public class BLTAurasModule : MBSubModuleBase
             {
                 var a = hero.GetAgent();
                 if (a == null || !a.IsActive() || !a.HasMount) { charging = false; return; }
+
+                LancerChargeCouchTracker.Set(a, couchDamageMultiplier, stayCouchedOnKillChancePercent);
 
                 float now = Mission.Current?.CurrentTime ?? 0f;
                 if (now - lastTick < updateInterval) return;
@@ -4083,6 +3723,7 @@ public class BLTAurasModule : MBSubModuleBase
             void Cleanup()
             {
                 var a = hero.GetAgent();
+                LancerChargeCouchTracker.Remove(a);
                 if (a == null || !a.IsActive() || !charging) return;
                 try { a.SetAutomaticTargetSelection(true); a.DisableScriptedMovement(); } catch { }
                 charging = false;
@@ -8762,20 +8403,6 @@ public class BLTAurasModule : MBSubModuleBase
 
         [DisplayName("Mounted Charge Damage Multiplier"), Description("Charge damage multiplier while mounted and active (3.0 = +300%)"), UsedImplicitly]
         public float MountedChargeDamageMultiplier { get; set; } = 3f;
-    }
-
-    [DisplayName("MBGA - Couched Lance")]
-    public class CouchedLanceConfig
-    {
-        private const string ID = "MBGA - Couched Lance";
-        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(CouchedLanceConfig));
-        internal static CouchedLanceConfig Get() => ActionManager.GetGlobalConfig<CouchedLanceConfig>(ID);
-
-        [DisplayName("Enabled"), Description("Master switch. Rewards a REAL native couched-lance hit for BLT heroes (mounted, moving fast, lance thrust the game itself recognizes as a couch) - does not force the pose, only reacts to it when it naturally happens."), UsedImplicitly]
-        public bool Enabled { get; set; } = true;
-
-        [DisplayName("Damage Multiplier"), Description("Bonus damage multiplier applied on top of a real couched-lance hit (2.0 = +100%). 1.0 or less disables the bonus."), UsedImplicitly]
-        public float DamageMultiplier { get; set; } = 2f;
     }
 
     [DisplayName("MBGA - Hero Bar")]
