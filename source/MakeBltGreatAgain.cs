@@ -6584,7 +6584,7 @@ public class BLTAurasModule : MBSubModuleBase
 
         [DisplayName("Tiers"), Category("1 - General"), PropertyOrder(5),
          Description("Promotion thresholds. Each tier: how many kills OR battles (whichever comes first) are needed in that class. The first tier should be 0/0 (start). Number of tiers = number of values you enter in the power sections."),
-         UsedImplicitly]
+         ExpandableObject, UsedImplicitly]
         public List<PowerTierDef> Tiers { get; set; } = new List<PowerTierDef>();
 
         // ── Sekcje per moc (każda pokazuje tylko swoje właściwości) ──
