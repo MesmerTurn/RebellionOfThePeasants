@@ -1,7 +1,7 @@
 ﻿// ══════════════════════════════════════════════════════════════════════════════
 // Conquest of Doravaro — scalony mod BLT
 // Zawiera: BLTFormation, BLTGuard,
-//          BLTUpgrade, BLTDuel, BLTClanGold, BLTGrail, BLTAuras
+//          BLTUpgrade, BLTDuel, BLTClanGold, BLTAuras
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── Usings ──
@@ -1117,72 +1117,7 @@ public class BLTGuardModule : MBSubModuleBase
         }
     }
 
-    // Samodzielny system "Normalize Armor" dla turniejów, działający jako Postfix na natywnej metodzie
-    // TournamentFightMissionController.AddRandomClothes - NIE zależy od żadnych fork-owych metod
-    // (ApplyNormalizedArmor/BuildClassLoadout to metody dodane WYŁĄCZNIE w naszym forku, nie istnieją
-    // w oryginalnym DLL Randomchair22 - stąd Postfix na natywnej metodzie zamiast Prefix na nich).
-    // Uruchamia się zawsze PO oryginale (i po ewentualnym własnym NormalizeArmor forka, jeśli DLL jest
-    // forkiem), więc jego wynik jest ostateczny - nadpisuje slot pancerza preferując kulturę bohatera.
-    public class MBGATournamentLoadoutConfig
-    {
-        private const string ID = "MBGA - Tournament Loadout";
-        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(MBGATournamentLoadoutConfig));
-        internal static MBGATournamentLoadoutConfig Get() => ActionManager.GetGlobalConfig<MBGATournamentLoadoutConfig>(ID);
 
-        [DisplayName("Normalize Armor"), Description("Give tournament participants matching armor at a fixed tier, preferring each hero's own culture. Standalone MBGA re-implementation of the BLT tournament armor normalization feature."), UsedImplicitly]
-        public bool NormalizeArmor { get; set; } = false;
-
-        [DisplayName("Normalize Armor Tier"), Description("Armor tier (1-6) used when Normalize Armor is enabled."), UsedImplicitly]
-        public int NormalizeArmorTier { get; set; } = 4;
-    }
-
-    // DISABLED in the 1.3.15 Warsails line: tournament armor normalization was a TOR-specific feature
-    // and the fork's own BLTAdoptAHero already provides it (ApplyNormalizedArmor/BuildClassLoadout).
-    // Class-level [HarmonyPatch] removed so PatchAll skips it; the code stays dormant. (Belongs to the
-    // separate hidden TOR package, not here.)
-    internal static class TournamentCulturePatch
-    {
-        [HarmonyPostfix]
-        [HarmonyPatch(typeof(SandBox.Tournaments.MissionLogics.TournamentFightMissionController), "AddRandomClothes")]
-        private static void AddRandomClothesPostfix(CultureObject culture,
-            TaleWorlds.CampaignSystem.TournamentGames.TournamentParticipant participant)
-        {
-            try
-            {
-                var cfg = MBGATournamentLoadoutConfig.Get();
-                if (cfg == null || !cfg.NormalizeArmor || participant == null) return;
-
-                var heroCulture = participant.Character?.HeroObject?.Culture ?? culture;
-                int tier = Math.Max(0, Math.Min(5, cfg.NormalizeArmorTier - 1));
-                foreach (var (slot, itemType) in SkillGroup.ArmorIndexType)
-                {
-                    var item = SelectRandomItemNearestTier(
-                                   CampaignHelpers.AllItems.Where(i => i.Culture == heroCulture && i.ItemType == itemType), tier)
-                               ?? SelectRandomItemNearestTier(
-                                   CampaignHelpers.AllItems.Where(i => i.ItemType == itemType), tier);
-                    if (item != null)
-                        participant.MatchEquipment[slot] = new EquipmentElement(item);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Exception("TournamentCulturePatch.AddRandomClothesPostfix failed", ex);
-            }
-        }
-
-        // EquipHero i GlobalCommonConfig (BLTAdoptAHero) sa klasami internal, wiec ich
-        // SelectRandomItemNearestTier / RestrictedItemIds nie sa dostepne z MBGA - lokalna
-        // reimplementacja tej samej logiki wyboru tieru (bez filtra restricted-item, ktory
-        // wymagalby dostepu do internal configu forka), zeby dzialac niezaleznie od DLL-a BLT.
-        private static ItemObject SelectRandomItemNearestTier(IEnumerable<ItemObject> items, int tier)
-        {
-            var allowed = items.ToList();
-            var atOrBelow = allowed.Where(i => (int)i.Tier <= tier).ToList();
-            if (atOrBelow.Count > 0)
-                return atOrBelow.GroupBy(item => (int)item.Tier).OrderByDescending(g => g.Key).FirstOrDefault()?.SelectRandom();
-            return allowed.GroupBy(item => (int)item.Tier).OrderBy(g => g.Key).FirstOrDefault()?.SelectRandom();
-        }
-    }
 
     // Samodzielny refund za "!retinue clear" - fork zwraca poziom z KillRetinueAtIndex (int) i liczy
     // zwrot z wlasnych kosztow tierow, ale oryginalny (niezmodyfikowany) DLL Randomchair22 ma
@@ -2725,14 +2660,9 @@ public class BLTAurasModule : MBSubModuleBase
             ActionManager.RegisterAll(typeof(BLTAurasModule).Assembly);
             // Rejestracja w konstruktorze — niezależna od PatchAll, na pewno wykona się przed ładowaniem ustawień
             try { PowerProgressionGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[PowerProg] Register failed", ex); }
-            // TOR-only configs (Culture Restriction / Equip From Culture) NOT registered in the
-            // 1.3.15 Warsails line - they belong to the separate hidden TOR package. Classes stay
-            // dormant in the DLL; without Register() they never appear in the config UI.
             try { WandererGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Wanderer] Register failed", ex); }
             try { AdrenalineGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Adrenaline] Register failed", ex); }
             try { HeroBarGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[HeroBar] Register failed", ex); }
-            // MBGA - Tournament Loadout NOT registered in 1.3.15 Warsails line: TOR-specific and the
-            // fork already provides tournament armor normalization. Class dormant in DLL.
             try { MBGARetinueRefundConfig.Register(); } catch (Exception ex) { Log.Exception("[RetinueRefund] Register failed", ex); }
             // MBGA - Prestige NOT registered in 1.3.15 Warsails line: the fork (BLTAdoptAHero 5.4.x)
             // has native prestige (Global Common Config > Prestige System, handler PrestigeHero). The
@@ -2764,8 +2694,6 @@ public class BLTAurasModule : MBSubModuleBase
                 else
                     Log.Info($"[PowerProg] Patch target/prefix not found (target={target != null}, prefix={prefix != null})");
 
-                // TOR-only culture patches (Culture Restriction / Equip From Culture) NOT applied in
-                // the 1.3.15 Warsails line - they belong to the separate hidden TOR package.
 
                 // Human children — ręcznie raz (nie [HarmonyPatch]/PatchAll)
                 var childTarget = HumanChildPatch.TargetMethod();
@@ -6942,44 +6870,6 @@ public class BLTAurasModule : MBSubModuleBase
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════
-    //  ADOPT CULTURE RESTRICTION — config
-    // ════════════════════════════════════════════════════════════════════
-
-    [DisplayName("MBGA - Culture Restriction")]
-    public class AdoptCultureRestrictionGlobalConfig
-    {
-        private const string ID = "MBGA - Culture Restriction";
-        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(AdoptCultureRestrictionGlobalConfig));
-        internal static AdoptCultureRestrictionGlobalConfig Get() => ActionManager.GetGlobalConfig<AdoptCultureRestrictionGlobalConfig>(ID);
-
-        [DisplayName("Enabled"),
-         Description("Restrict which cultures can be adopted via the adopt-by-culture command. When off, all cultures are available (default BLT behavior)."),
-         UsedImplicitly]
-        public bool Enabled { get; set; } = false;
-
-        [DisplayName("Allowed Cultures"),
-         Description("List of culture names or string ids that viewers are allowed to adopt (e.g. Empire, Vlandia). Case-insensitive."),
-         UsedImplicitly]
-        public List<string> AllowedCultures { get; set; } = new List<string>();
-
-        public bool IsAllowed(CultureObject culture)
-        {
-            if (culture == null || AllowedCultures == null) return false;
-            string name = culture.Name?.ToString()?.Trim();
-            string sid  = culture.StringId?.Trim();
-            return AllowedCultures.Any(a =>
-            {
-                var t = a?.Trim();
-                return !string.IsNullOrEmpty(t) &&
-                    (string.Equals(t, name, StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(t, sid, StringComparison.OrdinalIgnoreCase));
-            });
-        }
-
-        public string AllowedDisplay()
-            => string.Join(", ", CampaignHelpers.MainCultures.Where(IsAllowed).Select(c => c.Name.ToString()));
-    }
 
     // ════════════════════════════════════════════════════════════════════
     //  BANNER SANITIZER — fix Warsails banner crash (no-Warsails setups)
@@ -7060,63 +6950,6 @@ public class BLTAurasModule : MBSubModuleBase
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════
-    //  ADOPT CULTURE RESTRICTION — Harmony prefix (aplikowany ręcznie raz)
-    // ════════════════════════════════════════════════════════════════════
-
-    internal static class AdoptCultureRestrictionPatch
-    {
-        internal static System.Reflection.MethodBase TargetMethod()
-        {
-            var type = typeof(BLTAdoptAHeroCampaignBehavior).Assembly.GetTypes()
-                .FirstOrDefault(t => t.Name == "AdoptAHero");
-            return type?.GetMethod("ExecuteInternal",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        }
-
-        internal static bool Prefix(object settings, string contextArgs, ref ValueTuple<bool, string> __result)
-        {
-            try
-            {
-                var cfg = AdoptCultureRestrictionGlobalConfig.Get();
-                if (cfg == null || !cfg.Enabled || cfg.AllowedCultures == null || cfg.AllowedCultures.Count == 0)
-                    return true;
-
-                var vsProp = settings?.GetType().GetProperty("ViewerSelects");
-                var vsVal = vsProp?.GetValue(settings);
-                if (vsVal == null || vsVal.ToString() != "Culture")
-                    return true;
-
-                string allowedDisplay = cfg.AllowedDisplay();
-                string arg = (contextArgs ?? "").Trim();
-
-                if (arg.Length <= 1 || string.Equals(arg, "list", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(arg, "a", StringComparison.OrdinalIgnoreCase))
-                {
-                    __result = (false, $"Available cultures: {allowedDisplay}");
-                    return false;
-                }
-
-                var match = CampaignHelpers.MainCultures
-                    .Where(cfg.IsAllowed)
-                    .FirstOrDefault(c => c.Name.ToString().StartsWith(arg, StringComparison.CurrentCultureIgnoreCase));
-                if (match != null)
-                    return true;
-
-                var exists = CampaignHelpers.MainCultures
-                    .FirstOrDefault(c => c.Name.ToString().StartsWith(arg, StringComparison.CurrentCultureIgnoreCase));
-                __result = exists != null
-                    ? (false, $"Culture '{exists.Name}' is not allowed. Available cultures: {allowedDisplay}")
-                    : (false, $"No culture starting with '{arg}' found. Available cultures: {allowedDisplay}");
-                return false;
-            }
-            catch (Exception e)
-            {
-                Log.Exception("[CultureRestrict] Prefix", e);
-                return true;
-            }
-        }
-    }
 
     // ════════════════════════════════════════════════════════════════════
     //  HUMAN CHILDREN — anti-crash dla nie-ludzkich ras (The Old Realm)
@@ -7142,23 +6975,6 @@ public class BLTAurasModule : MBSubModuleBase
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════
-    //  EQUIP FROM HERO CULTURE (TOR) — config + Harmony prefix
-    //  Bohater dostaje sprzet TYLKO z wlasnej kultury (nigdy obcej).
-    // ════════════════════════════════════════════════════════════════════
-
-    [DisplayName("MBGA - Equip From Culture")]
-    public class EquipCultureGlobalConfig
-    {
-        private const string ID = "MBGA - Equip From Culture";
-        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(EquipCultureGlobalConfig));
-        internal static EquipCultureGlobalConfig Get() => ActionManager.GetGlobalConfig<EquipCultureGlobalConfig>(ID);
-
-        [DisplayName("Enabled"),
-         Description("Adopted heroes only get equipment from their own culture (for total-conversion mods like The Old Realms where every item is culture-tagged). If the culture has no item for a slot, the nearest tier of the SAME culture is used, or the slot stays empty. Leave OFF for vanilla (most vanilla items have no culture and heroes would end up unarmed)."),
-         UsedImplicitly]
-        public bool Enabled { get; set; } = false;
-    }
 
     public class WandererRecord
     {
@@ -8432,32 +8248,6 @@ public class BLTAurasModule : MBSubModuleBase
         public bool ShowSideBars { get; set; } = true;
     }
 
-    internal static class EquipCultureRestrictionPatch
-    {
-        internal static System.Reflection.MethodBase TargetMethod()
-        {
-            var type = typeof(BLTAdoptAHeroCampaignBehavior).Assembly.GetTypes()
-                .FirstOrDefault(t => t.Name == "EquipHero");
-            return type?.GetMethod("FindRandomTieredEquipment",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        }
-
-        // Prefix na EquipHero.FindRandomTieredEquipment — wymusza kulture bohatera przez parametry.
-        // (EquipHero jest internal, wiec nie siegamy do jego helperow — tylko podmieniamy parametry,
-        //  reszte robi oryginalna metoda: filtr item.Culture==kultura + wybor tieru w tej kulturze.)
-        internal static void Prefix(Hero hero, ref CultureObject cultureFilter, ref bool cultureFilterSpecified)
-        {
-            try
-            {
-                var cfg = EquipCultureGlobalConfig.Get();
-                if (cfg == null || !cfg.Enabled) return;             // standard BLT
-                if (hero?.Culture == null) return;                   // brak kultury → standard
-                cultureFilter = hero.Culture;                        // wymus kulture bohatera
-                cultureFilterSpecified = true;                       // ... i nigdy nie odpuszczaj (brak obcej kultury)
-            }
-            catch (Exception e) { Log.Exception("[EquipCulture] Prefix", e); }
-        }
-    }
 
     // !discard w oryginalnym DLL nie ma ani ostrzezenia przed skasowaniem zalozonego przedmiotu, ani
     // refundu - fork dodaje obie rzeczy, ale refund liczy z BLTCustomItemsCampaignBehavior.PurchaseCost,
