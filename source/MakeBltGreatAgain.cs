@@ -6213,7 +6213,9 @@ public class BLTAurasModule : MBSubModuleBase
                                 , formationTroopIndex: 0
                                 , isAlarmed: true
                                 , wieldInitialWeapons: true
+#if BLT_1315
                                 , forceDismounted: false
+#endif
                                 , initialPosition: p.Position
                                 , initialDirection: p.HeroAgent.GetMovementDirection()
                             );
@@ -8004,7 +8006,9 @@ public class BLTAurasModule : MBSubModuleBase
                     , formationTroopIndex: 0
                     , isAlarmed: true
                     , wieldInitialWeapons: true
+#if BLT_1315
                     , forceDismounted: false
+#endif
                     , initialPosition: spawnPos
                     , initialDirection: spawnDir
                 );
