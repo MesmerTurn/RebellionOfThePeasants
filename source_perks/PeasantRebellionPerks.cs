@@ -103,19 +103,22 @@ namespace PeasantRebellionPerks
         // "GlobalConfigs.Select(c => c.Config).OfType<IDocumentable>()" loop.
         public void GenerateDocumentation(IDocumentationGenerator generator)
         {
-            var branches = Perks
-                .GroupBy(p => p.Branch)
-                .Select(g => (
-                    BranchName: g.Key,
-                    Perks: g.OrderBy(p => p.RequiredRank).Select(p => (
-                        Key: p.Key,
-                        DisplayName: p.DisplayName,
-                        BonusPerRank: p.BonusPerRank,
-                        RequiredPerkKey: p.RequiredPerkKey,
-                        RequirementText: BuildRequirementText(p)
-                    ))
-                ));
-            generator.PerksSection(branches, _ => 1);
+            generator.Div("perks-config", () =>
+            {
+                var branches = Perks
+                    .GroupBy(p => p.Branch)
+                    .Select(g => (
+                        BranchName: g.Key,
+                        Perks: g.OrderBy(p => p.RequiredRank).Select(p => (
+                            Key: p.Key,
+                            DisplayName: p.DisplayName,
+                            BonusPerRank: p.BonusPerRank,
+                            RequiredPerkKey: p.RequiredPerkKey,
+                            RequirementText: BuildRequirementText(p)
+                        ))
+                    ));
+                generator.PerksSection(branches, _ => 1);
+            });
         }
 
         private static string BuildRequirementText(PerkDef p)
