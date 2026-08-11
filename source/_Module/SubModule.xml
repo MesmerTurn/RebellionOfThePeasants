@@ -53,12 +53,6 @@
 			<SubModuleClassType value="MakeBltGreatAgain.BLTAurasModule"/>
 			<Tags/>
 		</SubModule>
-		<SubModule>
-			<Name value="MakeBltGreatAgain_Perk"/>
-			<DLLName value="MakeBltGreatAgain.dll"/>
-			<SubModuleClassType value="MakeBltGreatAgain.BLTPerkModule"/>
-			<Tags/>
-		</SubModule>
 	</SubModules>
 	<DependedModuleMetadatas>
 		<DependedModuleMetadata id="Bannerlord.Harmony"  order="LoadBeforeThis"/>
