@@ -1,4 +1,17 @@
 ﻿Commands:
+- Documentation: Show perk points, ranks per branch, or buy the next rank in a branch. Usage - !perk, !perk <branch>, !perk buy <branch>.
+  Enabled: true
+  Group: ''
+  Handler: PerkCommand
+  HandlerConfig: {}
+  Help: '!perk [<branch> | buy <branch>]'
+  HideHelp: false
+  ID: 3a8e1b8b-0474-449b-8f9b-944463c0f935
+  ModeratorOnly: false
+  Name: perk
+  RespondInExtension: false
+  RespondInOverlay: false
+  RespondInTwitch: true
 - Documentation: '{=ZVxCqyJL}Show the heroes achievements and tracked stats.'
   Enabled: true
   Group: ''

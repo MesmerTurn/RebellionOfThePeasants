@@ -7119,6 +7119,89 @@ public class BLTAurasModule : MBSubModuleBase
         }
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    //  PERK SYSTEM — !perk chat command
+    // ════════════════════════════════════════════════════════════════════
+
+    public class PerkCommand : ICommandHandler
+    {
+        public class Settings { }
+        public Type HandlerConfigType => typeof(Settings);
+
+        public void Execute(ReplyContext context, object config)
+        {
+            var cfg = PerkGlobalConfig.Get();
+            if (cfg == null || !cfg.Enabled)
+            {
+                ActionManager.SendReply(context, "Perks are currently disabled.");
+                return;
+            }
+
+            var hero = BLTAdoptAHeroCampaignBehavior.Current?.GetAdoptedHero(context.UserName);
+            if (hero == null)
+            {
+                ActionManager.SendReply(context, "Adopt a hero first with !adopt.");
+                return;
+            }
+
+            PerkService.RefreshPoints(hero);
+            var perkBeh = BLTPerkBehavior.Current;
+            var rec = perkBeh.GetOrCreate(hero);
+            var args = (context.Args ?? "").Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+            if (args.Length == 0)
+            {
+                var branchSummaries = cfg.Perks.GroupBy(p => p.Branch)
+                    .Select(g => $"{g.Key}: {g.Sum(p => perkBeh.GetRank(hero, p.Key))}/{g.Sum(p => p.MaxRank)}");
+                ActionManager.SendReply(context,
+                    $"Points available: {rec.PointsAvailable}. Ranks — {string.Join(" | ", branchSummaries)}. Use !perk <branch> for details or !perk buy <branch> to spend a point.");
+                return;
+            }
+
+            if (args[0].Equals("buy", StringComparison.OrdinalIgnoreCase) && args.Length >= 2)
+            {
+                string branchQuery = string.Join(" ", args.Skip(1));
+                var nextPerk = cfg.Perks
+                    .Where(p => p.Branch.IndexOf(branchQuery, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .OrderBy(p => p.RequiredRank)
+                    .FirstOrDefault(p => perkBeh.GetRank(hero, p.Key) < p.MaxRank);
+                if (nextPerk == null)
+                {
+                    ActionManager.SendReply(context, $"No purchasable perk found in branch '{branchQuery}'.");
+                    return;
+                }
+                if (PerkService.Buy(hero, nextPerk, out var msg))
+                    ActionManager.SendReply(context, msg);
+                else
+                    ActionManager.SendReply(context, $"Can't buy {nextPerk.DisplayName}: {msg}");
+                return;
+            }
+
+            // !perk <branch> — detail view
+            string query = string.Join(" ", args);
+            var branchPerks = cfg.Perks
+                .Where(p => p.Branch.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                .OrderBy(p => p.RequiredRank).ToList();
+            if (branchPerks.Count == 0)
+            {
+                ActionManager.SendReply(context, $"Unknown branch '{query}'. Use !perk to see all branches.");
+                return;
+            }
+            var lines = branchPerks.Select(p =>
+            {
+                int rank = perkBeh.GetRank(hero, p.Key);
+                string status = rank >= p.MaxRank ? "MAXED" : CanBuySummary(hero, p);
+                return $"{p.DisplayName}: rank {rank}/{p.MaxRank}, +{p.BonusPerRank * 100:0.#}%/rank ({status})";
+            });
+            ActionManager.SendReply(context, string.Join(" | ", lines));
+        }
+
+        private static string CanBuySummary(Hero hero, PerkDef p)
+        {
+            return PerkService.CanBuy(hero, p, out var reason) ? "buyable" : reason;
+        }
+    }
+
     [DisplayName("MBGA - Power Progression")]
     public class PowerProgressionGlobalConfig
     {
