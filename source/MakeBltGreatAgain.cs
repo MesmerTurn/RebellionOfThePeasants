@@ -6485,6 +6485,138 @@ public class BLTAurasModule : MBSubModuleBase
         [DisplayName("Stealth Duration (seconds)"), Description("How long the hero stays hidden/untargetable."), UsedImplicitly] public string StealthDuration { get; set; } = "";
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    //  PERK SYSTEM — data model
+    // ════════════════════════════════════════════════════════════════════
+
+    public class PerkDef
+    {
+        [DisplayName("Key"), Description("Unique internal identifier, e.g. 'lance_1'. Do not change once players have ranks in it."), UsedImplicitly]
+        public string Key { get; set; } = "";
+
+        [DisplayName("Display Name"), Description("Shown in !perk and on the Neocities page."), UsedImplicitly]
+        public string DisplayName { get; set; } = "";
+
+        [DisplayName("Branch"), Description("Groups this perk with others for rendering and rank lookup, e.g. 'Lance Mastery'."), UsedImplicitly]
+        public string Branch { get; set; } = "";
+
+        [DisplayName("Max Rank"), Description("How many times this perk can be purchased. 3-4 typical."), UsedImplicitly]
+        public int MaxRank { get; set; } = 3;
+
+        [DisplayName("Bonus Per Rank"), Description("Effect size added per rank, e.g. 0.02 = 2%. Deliberately small by design."), UsedImplicitly]
+        public float BonusPerRank { get; set; } = 0.02f;
+
+        [DisplayName("Required Perk Key"), Description("Empty = this is a branch root (buyable with 0 prerequisites). Otherwise the Key of the perk that must be ranked first."), UsedImplicitly]
+        public string RequiredPerkKey { get; set; } = "";
+
+        [DisplayName("Required Rank"), Description("Minimum rank the required perk must have before this one can be bought."), UsedImplicitly]
+        public int RequiredRank { get; set; } = 1;
+
+        [DisplayName("Min Level"), Description("Hero level required. 0 = no gate."), UsedImplicitly]
+        public int MinLevel { get; set; } = 0;
+
+        [DisplayName("Min Tier"), Description("Power Progression tier required (see PowerProgressionGlobalConfig). 0 = no gate."), UsedImplicitly]
+        public int MinTier { get; set; } = 0;
+
+        [DisplayName("Required Achievement Key"), Description("Capstones only. Empty = not achievement-gated. When set, this perk cannot be bought with points at all until the named achievement has fired for the hero."), UsedImplicitly]
+        public string RequiredAchievementKey { get; set; } = "";
+    }
+
+    [DisplayName("MBGA - Perks")]
+    public class PerkGlobalConfig
+    {
+        private const string ID = "MBGA - Perks";
+        internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(PerkGlobalConfig));
+        internal static PerkGlobalConfig Get() => ActionManager.GetGlobalConfig<PerkGlobalConfig>(ID);
+
+        [DisplayName("Enabled"), Category("1 - General"), PropertyOrder(1),
+         Description("Enables/disables the entire perk system. When disabled, !perk reports it's off and no bonuses apply."), UsedImplicitly]
+        public bool Enabled { get; set; } = false;
+
+        [DisplayName("Kills Per Point"), Category("1 - General"), PropertyOrder(2),
+         Description("How many kills (in this class) grant one perk point. 0 = kills don't grant points."), UsedImplicitly]
+        public int KillsPerPoint { get; set; } = 10;
+
+        [DisplayName("Battles Per Point"), Category("1 - General"), PropertyOrder(3),
+         Description("How many battles (in this class) grant one perk point. 0 = battles don't grant points."), UsedImplicitly]
+        public int BattlesPerPoint { get; set; } = 5;
+
+        [DisplayName("Points Per Hero Level"), Category("1 - General"), PropertyOrder(4),
+         Description("How many perk points are granted per hero level gained. 0 = level doesn't grant points."), UsedImplicitly]
+        public int PointsPerLevel { get; set; } = 1;
+
+        [DisplayName("Perks"), Category("2 - Catalog"), PropertyOrder(10),
+         Description("The full perk catalog. Add/remove/edit freely — Key must stay unique. See spec doc for the recommended default 16-branch shape."),
+         ExpandableObject, UsedImplicitly]
+        public List<PerkDef> Perks { get; set; } = PerkCatalog.Default();
+    }
+
+    public static class PerkCatalog
+    {
+        public static List<PerkDef> Default()
+        {
+            var list = new List<PerkDef>();
+            void Branch(string branchName, string keyPrefix, float bonusPerRank, int ranks = 3)
+            {
+                string prevKey = "";
+                for (int r = 1; r <= ranks; r++)
+                {
+                    string key = $"{keyPrefix}_{r}";
+                    list.Add(new PerkDef
+                    {
+                        Key = key,
+                        DisplayName = $"{branchName} {r}",
+                        Branch = branchName,
+                        MaxRank = 1,
+                        BonusPerRank = bonusPerRank,
+                        RequiredPerkKey = prevKey,
+                        RequiredRank = 1,
+                    });
+                    prevKey = key;
+                }
+            }
+
+            Branch("HP",             "hp",       0.02f);
+            Branch("Damage",         "dmg",      0.015f);
+            Branch("Evade",          "evade",    0.01f);
+            Branch("Regen",          "regen",    0.02f);
+            Branch("Berserk",        "berserk",  0.02f);
+            Branch("Loot",           "loot",     0.03f);
+            Branch("Speed",          "speed",    0.01f);
+            Branch("Accuracy",       "acc",      0.01f);
+            Branch("Mounted Armor",  "mtdarmor", 0.02f);
+            Branch("Mounted Charge", "mtdchg",   0.02f);
+            Branch("Weapon Mastery: Two-Handed", "wm2h", 0.015f);
+            Branch("Weapon Mastery: Polearm",    "wmpole", 0.015f);
+            Branch("Weapon Mastery: Thrown",     "wmthrow", 0.015f);
+
+            // BLT-unique branches (3 ranks + achievement-gated capstone at rank 4)
+            void UniqueBranch(string branchName, string keyPrefix, float bonusPerRank, string achievementKey)
+            {
+                Branch(branchName, keyPrefix, bonusPerRank);
+                list.Add(new PerkDef
+                {
+                    Key = $"{keyPrefix}_4",
+                    DisplayName = $"{branchName} (Mastery)",
+                    Branch = branchName,
+                    MaxRank = 1,
+                    BonusPerRank = bonusPerRank * 2f,
+                    RequiredPerkKey = $"{keyPrefix}_3",
+                    RequiredRank = 1,
+                    RequiredAchievementKey = achievementKey,
+                });
+            }
+
+            UniqueBranch("Lance Mastery",      "lance",    0.02f, "");
+            UniqueBranch("Wanderer Bond",      "wander",   0.02f, "");
+            UniqueBranch("Aura Potency",       "aura",     0.02f, "");
+            UniqueBranch("Adrenaline Surge",   "adrenal",  0.02f, "");
+            UniqueBranch("Weapon Swap Speed",  "swapspd",  0.015f, "");
+
+            return list;
+        }
+    }
+
     [DisplayName("MBGA - Power Progression")]
     public class PowerProgressionGlobalConfig
     {
