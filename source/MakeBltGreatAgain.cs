@@ -6692,6 +6692,128 @@ public class BLTAurasModule : MBSubModuleBase
         }
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    //  PERK SYSTEM — service (shared by !perk and the Neocities page)
+    // ════════════════════════════════════════════════════════════════════
+
+    public static class PerkService
+    {
+        public static void RefreshPoints(Hero hero)
+        {
+            var cfg = PerkGlobalConfig.Get();
+            if (cfg == null || !cfg.Enabled || hero == null) return;
+            var perkBeh = BLTPerkBehavior.Current;
+            var aahBeh = BLTAdoptAHeroCampaignBehavior.Current;
+            if (perkBeh == null || aahBeh == null) return;
+
+            var rec = perkBeh.GetOrCreate(hero);
+            int kills = aahBeh.GetAchievementClassStat(hero, AchievementStatsData.Statistic.TotalKills);
+            int battles = aahBeh.GetAchievementClassStat(hero, AchievementStatsData.Statistic.Battles);
+            int level = hero.Level;
+
+            int newPoints = 0;
+            if (cfg.KillsPerPoint > 0)
+            {
+                int deltaKills = Math.Max(0, kills - rec.LastKillsCounted);
+                newPoints += deltaKills / cfg.KillsPerPoint;
+                rec.LastKillsCounted += (deltaKills / cfg.KillsPerPoint) * cfg.KillsPerPoint;
+            }
+            if (cfg.BattlesPerPoint > 0)
+            {
+                int deltaBattles = Math.Max(0, battles - rec.LastBattlesCounted);
+                newPoints += deltaBattles / cfg.BattlesPerPoint;
+                rec.LastBattlesCounted += (deltaBattles / cfg.BattlesPerPoint) * cfg.BattlesPerPoint;
+            }
+            if (cfg.PointsPerLevel > 0 && level > rec.LastLevelCounted)
+            {
+                newPoints += (level - rec.LastLevelCounted) * cfg.PointsPerLevel;
+                rec.LastLevelCounted = level;
+            }
+
+            if (newPoints > 0)
+            {
+                rec.PointsAvailable += newPoints;
+                rec.PointsEarnedTotal += newPoints;
+            }
+        }
+
+        public static float GetBonus(Hero hero, string branch)
+        {
+            var cfg = PerkGlobalConfig.Get();
+            var perkBeh = BLTPerkBehavior.Current;
+            if (cfg == null || !cfg.Enabled || perkBeh == null || hero == null) return 0f;
+            float total = 0f;
+            foreach (var p in cfg.Perks.Where(p => p.Branch == branch))
+            {
+                int rank = perkBeh.GetRank(hero, p.Key);
+                if (rank > 0) total += p.BonusPerRank * rank;
+            }
+            return total;
+        }
+
+        public static bool CanBuy(Hero hero, PerkDef perk, out string reason)
+        {
+            reason = "";
+            var cfg = PerkGlobalConfig.Get();
+            var perkBeh = BLTPerkBehavior.Current;
+            if (cfg == null || !cfg.Enabled) { reason = "Perk system is disabled."; return false; }
+            if (perk == null) { reason = "Unknown perk."; return false; }
+            if (perkBeh == null) { reason = "Perk state unavailable."; return false; }
+
+            int currentRank = perkBeh.GetRank(hero, perk.Key);
+            if (currentRank >= perk.MaxRank) { reason = $"{perk.DisplayName} is already at max rank."; return false; }
+
+            var rec = perkBeh.GetOrCreate(hero);
+            if (rec.PointsAvailable < 1) { reason = "Not enough perk points."; return false; }
+
+            if (!string.IsNullOrEmpty(perk.RequiredPerkKey) &&
+                perkBeh.GetRank(hero, perk.RequiredPerkKey) < perk.RequiredRank)
+            {
+                var reqDef = cfg.Perks.FirstOrDefault(p => p.Key == perk.RequiredPerkKey);
+                reason = $"Requires {(reqDef?.DisplayName ?? perk.RequiredPerkKey)} rank {perk.RequiredRank}+.";
+                return false;
+            }
+            if (perk.MinLevel > 0 && hero.Level < perk.MinLevel)
+            {
+                reason = $"Requires hero level {perk.MinLevel}+.";
+                return false;
+            }
+            if (perk.MinTier > 0 && PowerProgression.GetTier(hero) < perk.MinTier)
+            {
+                reason = $"Requires power tier {perk.MinTier}+.";
+                return false;
+            }
+            if (!string.IsNullOrEmpty(perk.RequiredAchievementKey) &&
+                !HasAchievement(hero, perk.RequiredAchievementKey))
+            {
+                reason = $"Requires the '{perk.RequiredAchievementKey}' achievement.";
+                return false;
+            }
+            return true;
+        }
+
+        public static bool Buy(Hero hero, PerkDef perk, out string message)
+        {
+            if (!CanBuy(hero, perk, out message)) return false;
+            var perkBeh = BLTPerkBehavior.Current;
+            var rec = perkBeh.GetOrCreate(hero);
+            int newRank = perkBeh.GetRank(hero, perk.Key) + 1;
+            rec.Ranks[perk.Key] = newRank;
+            rec.PointsAvailable -= 1;
+            message = $"{perk.DisplayName} is now rank {newRank}/{perk.MaxRank}.";
+            return true;
+        }
+
+        private static bool HasAchievement(Hero hero, string achievementKey)
+        {
+            // Fail-closed placeholder: real achievement lookup is wired in a later task once the
+            // exact achievement API is surveyed. Until then, any perk with a non-empty
+            // RequiredAchievementKey is simply unbuyable (fails closed, not open) — a safe
+            // default, not a stub that silently grants access.
+            return false;
+        }
+    }
+
     [DisplayName("MBGA - Power Progression")]
     public class PowerProgressionGlobalConfig
     {
