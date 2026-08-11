@@ -6617,6 +6617,81 @@ public class BLTAurasModule : MBSubModuleBase
         }
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    //  PERK SYSTEM — per-hero state
+    // ════════════════════════════════════════════════════════════════════
+
+    public class PerkHeroRecord
+    {
+        public int PointsAvailable { get; set; } = 0;
+        public int PointsEarnedTotal { get; set; } = 0;
+        public Dictionary<string, int> Ranks { get; set; } = new Dictionary<string, int>();
+        public int LastKillsCounted { get; set; } = 0;
+        public int LastBattlesCounted { get; set; } = 0;
+        public int LastLevelCounted { get; set; } = 0;
+    }
+
+    public class BLTPerkBehavior : CampaignBehaviorBase
+    {
+        public static BLTPerkBehavior Current => Campaign.Current?.GetCampaignBehavior<BLTPerkBehavior>();
+
+        private Dictionary<string, PerkHeroRecord> records = new Dictionary<string, PerkHeroRecord>();
+
+        public override void RegisterEvents() { }
+
+        public override void SyncData(IDataStore dataStore)
+        {
+            string json = dataStore.IsSaving
+                ? Newtonsoft.Json.JsonConvert.SerializeObject(records ?? new Dictionary<string, PerkHeroRecord>())
+                : null;
+            dataStore.SyncData("MBGAPerkJson", ref json);
+            if (!dataStore.IsSaving)
+            {
+                records = string.IsNullOrEmpty(json)
+                    ? new Dictionary<string, PerkHeroRecord>()
+                    : (Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, PerkHeroRecord>>(json)
+                       ?? new Dictionary<string, PerkHeroRecord>());
+            }
+            if (records == null) records = new Dictionary<string, PerkHeroRecord>();
+        }
+
+        public PerkHeroRecord GetOrCreate(Hero hero)
+        {
+            if (hero == null) return new PerkHeroRecord();
+            if (!records.TryGetValue(hero.StringId, out var rec))
+            {
+                rec = new PerkHeroRecord();
+                records[hero.StringId] = rec;
+            }
+            return rec;
+        }
+
+        public int GetRank(Hero hero, string perkKey)
+        {
+            if (hero == null || string.IsNullOrEmpty(perkKey)) return 0;
+            var rec = GetOrCreate(hero);
+            return rec.Ranks.TryGetValue(perkKey, out var r) ? r : 0;
+        }
+    }
+
+    public class BLTPerkModule : MBSubModuleBase
+    {
+        public BLTPerkModule()
+        {
+            ActionManager.RegisterAll(typeof(BLTPerkModule).Assembly);
+            try { PerkGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Perk] Register failed", ex); }
+        }
+
+        protected override void OnGameStart(Game game, IGameStarter gameStarterObject)
+        {
+            base.OnGameStart(game, gameStarterObject);
+            if (gameStarterObject is CampaignGameStarter campaignStarter)
+            {
+                campaignStarter.AddBehavior(new BLTPerkBehavior());
+            }
+        }
+    }
+
     [DisplayName("MBGA - Power Progression")]
     public class PowerProgressionGlobalConfig
     {
