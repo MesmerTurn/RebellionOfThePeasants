@@ -6854,13 +6854,54 @@ public class BLTAurasModule : MBSubModuleBase
             return true;
         }
 
+        // Surveyed: the fork's native achievement system (BLTAdoptAHero.Achievements.AchievementDef)
+        // has no persistent "unlocked" flag or string key at all - achievements are host-configured
+        // entries (identified by a Guid + a display Name) evaluated LIVE via
+        // AchievementDef.IsAchieved(hero) => Requirements.All(r => r.IsMet(hero)). The list lives on
+        // GlobalCommonConfig.Achievements, but that config class is `internal` to BLTAdoptAHero.dll -
+        // not directly callable from this separate assembly. Bridged via reflection instead, the
+        // same pattern already used for the BLTExternalStats hero-bar bridge in
+        // BLTAurasModule.OnSubModuleLoad (internal-only types are still fully reflectable across
+        // assembly boundaries - "internal" is a compile-time restriction, not a runtime one).
+        //
+        // RequiredAchievementKey therefore matches by the achievement's configured display Name
+        // (case-insensitive substring), NOT a stable programmatic key - the host must name their
+        // achievement to match what's configured in each capstone PerkDef.
         private static bool HasAchievement(Hero hero, string achievementKey)
         {
-            // Fail-closed placeholder: real achievement lookup is wired in a later task once the
-            // exact achievement API is surveyed. Until then, any perk with a non-empty
-            // RequiredAchievementKey is simply unbuyable (fails closed, not open) — a safe
-            // default, not a stub that silently grants access.
-            return false;
+            if (hero == null || string.IsNullOrEmpty(achievementKey)) return false;
+            try
+            {
+                var cfgType = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => { try { return a.GetType("BLTAdoptAHero.GlobalConfigs.GlobalCommonConfig"); } catch { return null; } })
+                    .FirstOrDefault(t => t != null);
+                if (cfgType == null) return false;
+
+                var getMethod = cfgType.GetMethod("Get", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+                var cfgInstance = getMethod?.Invoke(null, null);
+                if (cfgInstance == null) return false;
+
+                var achievementsProp = cfgType.GetProperty("Achievements", BindingFlags.Public | BindingFlags.Instance);
+                var achievements = achievementsProp?.GetValue(cfgInstance) as System.Collections.IEnumerable;
+                if (achievements == null) return false;
+
+                foreach (var achievement in achievements)
+                {
+                    var nameProp = achievement.GetType().GetProperty("Name");
+                    string name = nameProp?.GetValue(achievement)?.ToString() ?? "";
+                    if (name.IndexOf(achievementKey, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    var isAchievedMethod = achievement.GetType().GetMethod("IsAchieved", BindingFlags.Public | BindingFlags.Instance);
+                    if (isAchievedMethod?.Invoke(achievement, new object[] { hero }) is bool result)
+                        return result;
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.Exception("PerkService.HasAchievement (reflection bridge)", ex);
+                return false;
+            }
         }
     }
 
