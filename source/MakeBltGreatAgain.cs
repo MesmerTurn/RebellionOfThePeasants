@@ -1799,14 +1799,19 @@ public class BLTGuardModule : MBSubModuleBase
             {
                 var cfg = AdrenalineGlobalConfig.Get();
                 if (cfg == null || !cfg.Enabled) return;
-                if (cfg.MountedChargeDamageMultiplier <= 1f) return;
                 if (attacker == null || !attacker.IsActive()) return;
-                if (attacker.GetAdoptedHero() == null) return;
+                var hero = attacker.GetAdoptedHero();
+                if (hero == null) return;
                 if (!attacker.HasMount) return;                 // mounted only
                 if (!AdrenalineMissionBehavior.IsAdrenalineActive(attacker)) return;
                 if (!IsChargeBlow(b)) return;
 
-                float mult = cfg.MountedChargeDamageMultiplier;
+                // Adrenaline Surge perk: extra mounted-charge damage on top of the config
+                // multiplier, ONLY while adrenaline is already active (this is a strengthening
+                // perk, not a separate trigger - it does not lower the HP threshold that starts
+                // adrenaline, since that check lives in AdrenalineMissionBehavior, not here).
+                float mult = cfg.MountedChargeDamageMultiplier + PerkService.GetBonus(hero, "Adrenaline Surge");
+                if (mult <= 1f) return;
                 b.InflictedDamage = Math.Max(0, (int)Math.Round(b.InflictedDamage * mult));
                 b.BaseMagnitude *= mult;
                 collisionData.InflictedDamage = Math.Max(0, (int)Math.Round(collisionData.InflictedDamage * mult));
@@ -1853,6 +1858,7 @@ public class BLTGuardModule : MBSubModuleBase
                 // heroes without that power active.
                 if (!LancerChargeCouchTracker.TryGet(attacker, out var lancerSettings)) return;
                 float mult = lancerSettings.DamageMultiplier;
+                mult += PerkService.GetBonus(attacker.GetAdoptedHero(), "Lance Mastery"); // perk bonus stacks additively on top of the power's own multiplier
                 if (mult <= 1f) return;
                 b.InflictedDamage = Math.Max(0, (int)Math.Round(b.InflictedDamage * mult));
                 b.BaseMagnitude *= mult;
@@ -1892,6 +1898,7 @@ public class BLTGuardModule : MBSubModuleBase
                 // heroes without that power active.
                 if (!LancerChargeCouchTracker.TryGet(attacker, out var lancerSettings)) return;
                 float chance = lancerSettings.StayCouchedOnKillChancePercent;
+                chance += PerkService.GetBonus(attacker.GetAdoptedHero(), "Lance Mastery") * 100f; // GetBonus is a fraction (0.02 = 2%), chance is a percent
                 if (chance <= 0f) return;
 
                 if (MBRandom.RandomFloat * 100f < chance)
@@ -3208,6 +3215,17 @@ public class BLTAurasModule : MBSubModuleBase
             float dismountChancePercent = DismountChancePercent;
             float targetDamageBonusPercent = TargetDamageBonusPercent;
             float targetArmorBonusPercent = TargetArmorBonusPercent;
+
+            // Aura Potency perk: boosts radius and magnitude of whatever aura effect this power
+            // has configured, only if the hero actually has this aura-type power equipped.
+            float auraPotencyBonus = PerkService.GetBonus(hero, "Aura Potency");
+            if (auraPotencyBonus > 0f)
+            {
+                radius *= (1f + auraPotencyBonus);
+                if (targetDamageBonusPercent != 0f) targetDamageBonusPercent *= (1f + auraPotencyBonus);
+                if (targetArmorBonusPercent != 0f) targetArmorBonusPercent *= (1f + auraPotencyBonus);
+                if (healPerTick != 0f) healPerTick *= (1f + auraPotencyBonus);
+            }
             var armorConfigs = new Dictionary<Agent, AgentModifierConfig>();
 
             void OnAgentEnter(Agent target)
@@ -8100,6 +8118,16 @@ public class BLTAurasModule : MBSubModuleBase
                 {
                     var deathCfg = WandererGlobalConfig.Get();
                     float battleDeathChance = deathCfg?.BattleDeathChancePercent ?? 3f;
+
+                    // Wanderer Bond perk: the owner's investment reduces their own wanderer's
+                    // battle death chance (percentage points, not a multiplier - stays legible at
+                    // the already-small default chances).
+                    if (wandererAgentToHero.TryGetValue(affectedAgent, out var ownerHero))
+                    {
+                        float bondBonus = PerkService.GetBonus(ownerHero, "Wanderer Bond");
+                        if (bondBonus > 0f) battleDeathChance = Math.Max(0f, battleDeathChance - bondBonus * 100f);
+                    }
+
                     if (MBRandom.RandomFloat * 100f >= battleDeathChance)
                     {
                         affectedAgent.Health = Math.Max(1f, affectedAgent.HealthLimit * 0.01f);
