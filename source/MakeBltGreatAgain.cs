@@ -6720,6 +6720,7 @@ public class BLTAurasModule : MBSubModuleBase
             base.OnMissionBehaviorInitialize(mission);
             mission.AddMissionBehavior(new PerkRegenMissionBehavior());
             mission.AddMissionBehavior(new PerkLootMissionBehavior());
+            mission.AddMissionBehavior(new PerkStatMissionBehavior());
         }
     }
 
@@ -6972,6 +6973,90 @@ public class BLTAurasModule : MBSubModuleBase
                 if (bonusGold > 0) BLTAdoptAHeroCampaignBehavior.Current?.ChangeHeroGold(hero, bonusGold, true);
             }
             catch (Exception ex) { Log.Exception("PerkLootMissionBehavior.OnAgentRemoved", ex); }
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  PERK SYSTEM — continuous-stat branches
+    //  (Speed, Accuracy, Mounted Armor, Mounted Charge, Weapon Mastery x3, Weapon Swap Speed)
+    //
+    //  Uses the SAME BLTAgentModifierBehavior/AgentModifierConfig/PropertyModifierDef mechanism
+    //  this codebase already relies on elsewhere for live driven-property changes (see the
+    //  Composed Aura's armor-bonus config above, and the "Berserk" wanderer power) - not a new
+    //  SandboxAgentStatCalculateModel subclass, since this proven in-file mechanism already does
+    //  exactly this job. All DrivenProperty names below were confirmed to exist via reflection
+    //  against TaleWorlds.Core.dll before writing this (Weapon Mastery uses generic
+    //  MeleeWeaponDamageMultiplierBonus/ThrowingWeaponDamageMultiplierBonus rather than
+    //  per-weapon-class checks, since Agent.WieldedWeapon's weapon-class enum values weren't
+    //  reflection-verified and a wrong guess here would silently do nothing).
+    //
+    //  Weapon Swap Speed has NO dedicated DrivenProperty in this engine version at all (reflection
+    //  confirmed) - wired to ThrustOrRangedReadySpeedMultiplier as the closest real analog
+    //  (readying a weapon after a swap) rather than inventing a fake one.
+    // ════════════════════════════════════════════════════════════════════
+
+    public class PerkStatMissionBehavior : MissionBehavior
+    {
+        public override MissionBehaviorType BehaviorType => MissionBehaviorType.Other;
+
+        private readonly Dictionary<Agent, AgentModifierConfig> applied = new Dictionary<Agent, AgentModifierConfig>();
+
+        public override void OnMissionTick(float dt)
+        {
+            base.OnMissionTick(dt);
+            if (Mission.Current == null) return;
+            foreach (var agent in Mission.Current.Agents)
+            {
+                if (agent == null || !agent.IsActive() || applied.ContainsKey(agent)) continue;
+                var hero = agent.GetAdoptedHero();
+                if (hero == null) continue;
+
+                var config = BuildConfig(hero);
+                if (config.Properties.Count == 0) continue; // nothing to apply - don't register an empty config
+                applied[agent] = config;
+                BLTAgentModifierBehavior.Current?.Add(agent, config);
+            }
+        }
+
+        public override void OnAgentRemoved(Agent affectedAgent, Agent affectorAgent, AgentState agentState, KillingBlow blow)
+        {
+            if (affectedAgent != null && applied.TryGetValue(affectedAgent, out var config))
+            {
+                BLTAgentModifierBehavior.Current?.Remove(affectedAgent, config);
+                applied.Remove(affectedAgent);
+            }
+        }
+
+        private static AgentModifierConfig BuildConfig(Hero hero)
+        {
+            var config = new AgentModifierConfig();
+            void AddPct(DrivenProperty prop, float bonus)
+            {
+                if (bonus > 0f) config.Properties.Add(new PropertyModifierDef { Name = prop, ModifierPercent = 100f + bonus * 100f });
+            }
+
+            AddPct(DrivenProperty.SwingSpeedMultiplier, PerkService.GetBonus(hero, "Speed"));
+            AddPct(DrivenProperty.ReloadSpeed, PerkService.GetBonus(hero, "Speed"));
+
+            float accBonus = PerkService.GetBonus(hero, "Accuracy");
+            if (accBonus > 0f) config.Properties.Add(new PropertyModifierDef { Name = DrivenProperty.WeaponInaccuracy, ModifierPercent = 100f - accBonus * 100f });
+
+            AddPct(DrivenProperty.ArmorHead, PerkService.GetBonus(hero, "Mounted Armor"));
+            AddPct(DrivenProperty.ArmorTorso, PerkService.GetBonus(hero, "Mounted Armor"));
+            AddPct(DrivenProperty.ArmorLegs, PerkService.GetBonus(hero, "Mounted Armor"));
+            AddPct(DrivenProperty.ArmorArms, PerkService.GetBonus(hero, "Mounted Armor"));
+
+            AddPct(DrivenProperty.MountChargeDamage, PerkService.GetBonus(hero, "Mounted Charge"));
+
+            float wm2h = PerkService.GetBonus(hero, "Weapon Mastery: Two-Handed");
+            float wmPole = PerkService.GetBonus(hero, "Weapon Mastery: Polearm");
+            float wmThrow = PerkService.GetBonus(hero, "Weapon Mastery: Thrown");
+            AddPct(DrivenProperty.MeleeWeaponDamageMultiplierBonus, Math.Max(wm2h, wmPole));
+            AddPct(DrivenProperty.ThrowingWeaponDamageMultiplierBonus, wmThrow);
+
+            AddPct(DrivenProperty.ThrustOrRangedReadySpeedMultiplier, PerkService.GetBonus(hero, "Weapon Swap Speed"));
+
+            return config;
         }
     }
 
