@@ -6676,10 +6676,34 @@ public class BLTAurasModule : MBSubModuleBase
 
     public class BLTPerkModule : MBSubModuleBase
     {
+        private static Harmony harmony;
+
         public BLTPerkModule()
         {
             ActionManager.RegisterAll(typeof(BLTPerkModule).Assembly);
             try { PerkGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Perk] Register failed", ex); }
+        }
+
+        protected override void OnSubModuleLoad()
+        {
+            base.OnSubModuleLoad();
+            if (harmony != null) return;
+            try
+            {
+                // Manually applied once, here only - NOT via [HarmonyPatch]/PatchAll, for the same
+                // reason BLTAurasModule patches its own targets manually (9 MBGA sub-modules would
+                // otherwise each PatchAll the whole assembly, applying every [HarmonyPatch] 9x).
+                harmony = new Harmony("mod.bannerlord.bltperk");
+                harmony.Patch(
+                    AccessTools.Method(typeof(MissionCombatMechanicsHelper), "ComputeBlowDamage"),
+                    prefix: new HarmonyMethod(typeof(PerkDamageEvadePatch).GetMethod(nameof(PerkDamageEvadePatch.Prefix), BindingFlags.Static | BindingFlags.Public)),
+                    postfix: new HarmonyMethod(typeof(PerkDamageEvadePatch).GetMethod(nameof(PerkDamageEvadePatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
+                harmony.Patch(
+                    AccessTools.PropertyGetter(typeof(Agent), "HealthLimit"),
+                    postfix: new HarmonyMethod(typeof(PerkHealthLimitPatch).GetMethod(nameof(PerkHealthLimitPatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
+                Log.Info("[Perk] Combat patches applied: Damage/Evade/Berserk (ComputeBlowDamage), HP (Agent.HealthLimit).");
+            }
+            catch (Exception ex) { Log.Exception("[Perk] Combat patch setup failed", ex); }
         }
 
         protected override void OnGameStart(Game game, IGameStarter gameStarterObject)
@@ -6689,6 +6713,13 @@ public class BLTAurasModule : MBSubModuleBase
             {
                 campaignStarter.AddBehavior(new BLTPerkBehavior());
             }
+        }
+
+        public override void OnMissionBehaviorInitialize(Mission mission)
+        {
+            base.OnMissionBehaviorInitialize(mission);
+            mission.AddMissionBehavior(new PerkRegenMissionBehavior());
+            mission.AddMissionBehavior(new PerkLootMissionBehavior());
         }
     }
 
@@ -6811,6 +6842,136 @@ public class BLTAurasModule : MBSubModuleBase
             // RequiredAchievementKey is simply unbuyable (fails closed, not open) — a safe
             // default, not a stub that silently grants access.
             return false;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  PERK SYSTEM — direct-multiplier universal branches
+    //  (HP, Damage, Evade, Regen, Berserk, Loot)
+    //
+    //  This codebase has no single existing "outgoing damage %" or "max HP" hook to piggyback
+    //  on (damage bonuses live per-power via PowerHandler.Handlers.OnDoDamage, and HP is set at
+    //  spawn) - confirmed by direct reflection against TaleWorlds.MountAndBlade.dll before
+    //  writing this. These patches target the same real engine methods the wider Bannerlord
+    //  modding community uses for global damage/HP mods:
+    //  MissionCombatMechanicsHelper.ComputeBlowDamage (global per-hit damage calculation) and
+    //  Agent.HealthLimit (max HP). Regen/Loot reuse this file's own established patterns: the
+    //  agent.Health/agent.HealthLimit tick-heal already used by the "Juggernaut" wanderer power,
+    //  and the OnAgentRemoved + ChangeHeroGold kill-reward pattern already used by
+    //  NecromancyMissionBehavior/MBGAPrestigeKillTrackerBehavior.
+    // ════════════════════════════════════════════════════════════════════
+
+    [HarmonyPatch(typeof(MissionCombatMechanicsHelper), "ComputeBlowDamage")]
+    internal static class PerkDamageEvadePatch
+    {
+        public static void Prefix(ref AttackInformation attackInformation, ref bool cancelDamage)
+        {
+            try
+            {
+                if (cancelDamage) return;
+                var victimHero = attackInformation.VictimAgent?.GetAdoptedHero();
+                if (victimHero == null) return;
+                float evadeBonus = PerkService.GetBonus(victimHero, "Evade");
+                if (evadeBonus <= 0f) return;
+                if (MBRandom.RandomFloat < evadeBonus) cancelDamage = true;
+            }
+            catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Prefix", ex); }
+        }
+
+        public static void Postfix(ref AttackInformation attackInformation, bool cancelDamage, ref int inflictedDamage)
+        {
+            try
+            {
+                if (cancelDamage || inflictedDamage <= 0) return;
+                var atkAgent = attackInformation.AttackerAgent;
+                var attackerHero = atkAgent?.GetAdoptedHero();
+                if (attackerHero == null) return;
+
+                float dmgBonus = PerkService.GetBonus(attackerHero, "Damage");
+
+                float berserkBonus = 0f;
+                if (atkAgent.HealthLimit > 0f)
+                {
+                    float hpFrac = atkAgent.Health / atkAgent.HealthLimit;
+                    if (hpFrac < 0.3f) berserkBonus = PerkService.GetBonus(attackerHero, "Berserk");
+                }
+
+                float totalBonus = dmgBonus + berserkBonus;
+                if (totalBonus > 0f) inflictedDamage = (int)(inflictedDamage * (1f + totalBonus));
+            }
+            catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Postfix", ex); }
+        }
+    }
+
+    [HarmonyPatch(typeof(Agent), "HealthLimit", MethodType.Getter)]
+    internal static class PerkHealthLimitPatch
+    {
+        public static void Postfix(Agent __instance, ref float __result)
+        {
+            try
+            {
+                var hero = __instance?.GetAdoptedHero();
+                if (hero == null) return;
+                float bonus = PerkService.GetBonus(hero, "HP");
+                if (bonus > 0f) __result *= (1f + bonus);
+            }
+            catch (Exception ex) { Log.Exception("PerkHealthLimitPatch.Postfix", ex); }
+        }
+    }
+
+    // Heals BLT hero agents by a small fraction of their max HP every 5 seconds, scaled by their
+    // Regen perk rank. Same agent.Health/agent.HealthLimit tick pattern as the existing
+    // "Juggernaut" wanderer power (see WandererSpawnMissionBehavior.OnMissionTick).
+    public class PerkRegenMissionBehavior : MissionBehavior
+    {
+        public override MissionBehaviorType BehaviorType => MissionBehaviorType.Other;
+        private const float TickIntervalSeconds = 5f;
+        private float accumulator = 0f;
+
+        public override void OnMissionTick(float dt)
+        {
+            base.OnMissionTick(dt);
+            accumulator += dt;
+            if (accumulator < TickIntervalSeconds) return;
+            accumulator = 0f;
+            if (Mission.Current == null) return;
+
+            foreach (var agent in Mission.Current.Agents)
+            {
+                if (agent == null || !agent.IsActive() || agent.Health <= 0f) continue;
+                var hero = agent.GetAdoptedHero();
+                if (hero == null) continue;
+                float bonus = PerkService.GetBonus(hero, "Regen");
+                if (bonus <= 0f || agent.HealthLimit <= 0f) continue;
+                agent.Health = Math.Min(agent.HealthLimit, agent.Health + bonus * agent.HealthLimit);
+            }
+        }
+    }
+
+    // Grants a small bonus gold per kill scaled by the killer's Loot perk rank. There is no
+    // existing "base gold per kill" reward active in this codebase to multiply (confirmed:
+    // MBGAPrestigeConfig.GoldPerKillBonusPercentPerLevel is explicitly documented as
+    // "informational only... not wired into a gold-per-kill reward"), so this grants a flat
+    // amount directly rather than pretending to scale an existing reward. Same
+    // OnAgentRemoved + ChangeHeroGold pattern as NecromancyMissionBehavior.
+    public class PerkLootMissionBehavior : MissionBehavior
+    {
+        public override MissionBehaviorType BehaviorType => MissionBehaviorType.Other;
+
+        public override void OnAgentRemoved(Agent affectedAgent, Agent affectorAgent, AgentState agentState, KillingBlow blow)
+        {
+            try
+            {
+                if (agentState != AgentState.Killed && agentState != AgentState.Unconscious) return;
+                if (affectorAgent == null || affectorAgent == affectedAgent) return;
+                var hero = affectorAgent.GetAdoptedHero();
+                if (hero == null) return;
+                float bonus = PerkService.GetBonus(hero, "Loot");
+                if (bonus <= 0f) return;
+                int bonusGold = (int)Math.Round(bonus * 100f); // e.g. 0.03 (rank 1) -> 3 gold/kill
+                if (bonusGold > 0) BLTAdoptAHeroCampaignBehavior.Current?.ChangeHeroGold(hero, bonusGold, true);
+            }
+            catch (Exception ex) { Log.Exception("PerkLootMissionBehavior.OnAgentRemoved", ex); }
         }
     }
 
