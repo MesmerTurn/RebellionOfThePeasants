@@ -739,7 +739,8 @@ namespace PeasantRebellionPerks
             float wm2h = PerkService.GetBonus(hero, "Weapon Mastery: Two-Handed");
             float wmPole = PerkService.GetBonus(hero, "Weapon Mastery: Polearm");
             float wmThrow = PerkService.GetBonus(hero, "Weapon Mastery: Thrown");
-            AddPct(DrivenProperty.MeleeWeaponDamageMultiplierBonus, Math.Max(wm2h, wmPole));
+            float wm1h = PerkService.GetBonus(hero, "Weapon Mastery: One-Handed");
+            AddPct(DrivenProperty.MeleeWeaponDamageMultiplierBonus, Math.Max(Math.Max(wm2h, wmPole), wm1h));
             AddPct(DrivenProperty.ThrowingWeaponDamageMultiplierBonus, wmThrow);
 
             AddPct(DrivenProperty.ThrustOrRangedReadySpeedMultiplier, PerkService.GetBonus(hero, "Weapon Swap Speed"));
