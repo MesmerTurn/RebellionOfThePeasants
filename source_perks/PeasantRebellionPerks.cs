@@ -113,7 +113,12 @@ namespace PeasantRebellionPerks
                             Key: p.Key,
                             DisplayName: p.DisplayName,
                             BonusPerRank: p.BonusPerRank,
-                            RequiredPerkKey: p.RequiredPerkKey,
+                            // Single-entry today - PerkDef still has one RequiredPerkKey (the
+                            // cross-branch multi-Requirements model is a separate, not-yet-landed
+                            // expansion per docs/superpowers/specs/2026-08-12-perk-system-expansion-design.md).
+                            // The renderer already accepts a list so that expansion won't need to
+                            // touch DocumentationGenerator again.
+                            RequiredPerkKeys: (IEnumerable<string>)(string.IsNullOrEmpty(p.RequiredPerkKey) ? Array.Empty<string>() : new[] { p.RequiredPerkKey }),
                             RequirementText: BuildRequirementText(p)
                         ))
                     ));
