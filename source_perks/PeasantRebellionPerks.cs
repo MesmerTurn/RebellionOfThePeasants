@@ -41,6 +41,15 @@ namespace PeasantRebellionPerks
     //  PERK SYSTEM — data model
     // ════════════════════════════════════════════════════════════════════
 
+    public class PerkRequirement
+    {
+        [DisplayName("Perk Key"), Description("The Key of the perk that must have at least MinRank ranks purchased."), UsedImplicitly]
+        public string PerkKey { get; set; } = "";
+
+        [DisplayName("Min Rank"), Description("Minimum rank required in PerkKey."), UsedImplicitly]
+        public int MinRank { get; set; } = 1;
+    }
+
     public class PerkDef
     {
         [DisplayName("Key"), Description("Unique internal identifier, e.g. 'hp_1'. Do not change once players have ranks in it."), UsedImplicitly]
@@ -58,11 +67,15 @@ namespace PeasantRebellionPerks
         [DisplayName("Bonus Per Rank"), Description("Effect size added per rank, e.g. 0.02 = 2%. Deliberately small by design."), UsedImplicitly]
         public float BonusPerRank { get; set; } = 0.02f;
 
-        [DisplayName("Required Perk Key"), Description("Empty = this is a branch root (buyable with 0 prerequisites). Otherwise the Key of the perk that must be ranked first."), UsedImplicitly]
+        [DisplayName("Required Perk Key"), Description("Empty = this is a branch root (buyable with 0 prerequisites). Otherwise the Key of the perk that must be ranked first. Deprecated - kept only so old saved catalogs deserialize; new code should use Requirements."), UsedImplicitly]
         public string RequiredPerkKey { get; set; } = "";
 
-        [DisplayName("Required Rank"), Description("Minimum rank the required perk must have before this one can be bought."), UsedImplicitly]
+        [DisplayName("Required Rank"), Description("Minimum rank the required perk must have before this one can be bought. Deprecated - see RequiredPerkKey."), UsedImplicitly]
         public int RequiredRank { get; set; } = 1;
+
+        [DisplayName("Requirements"), Description("Every entry must be met before this perk can be bought. Empty = branch root. A normal perk has exactly one entry (the previous rank in its own branch). A hybrid capstone has two or more, possibly in different branches."),
+         ExpandableObject, UsedImplicitly]
+        public List<PerkRequirement> Requirements { get; set; } = new List<PerkRequirement>();
 
         [DisplayName("Min Level"), Description("Hero level required. 0 = no gate."), UsedImplicitly]
         public int MinLevel { get; set; } = 0;
@@ -358,11 +371,12 @@ namespace PeasantRebellionPerks
             var rec = perkBeh.GetOrCreate(hero);
             if (rec.PointsAvailable < 1) { reason = "Not enough perk points."; return false; }
 
-            if (!string.IsNullOrEmpty(perk.RequiredPerkKey) &&
-                perkBeh.GetRank(hero, perk.RequiredPerkKey) < perk.RequiredRank)
+            foreach (var req in perk.Requirements ?? new List<PerkRequirement>())
             {
-                var reqDef = cfg.Perks.FirstOrDefault(p => p.Key == perk.RequiredPerkKey);
-                reason = $"Requires {(reqDef?.DisplayName ?? perk.RequiredPerkKey)} rank {perk.RequiredRank}+.";
+                if (string.IsNullOrEmpty(req.PerkKey)) continue;
+                if (perkBeh.GetRank(hero, req.PerkKey) >= req.MinRank) continue;
+                var reqDef = cfg.Perks.FirstOrDefault(p => p.Key == req.PerkKey);
+                reason = $"Requires {(reqDef?.DisplayName ?? req.PerkKey)} rank {req.MinRank}+.";
                 return false;
             }
             if (perk.MinLevel > 0 && hero.Level < perk.MinLevel)
