@@ -274,7 +274,10 @@ namespace PeasantRebellionPerks
                 harmony.Patch(
                     AccessTools.PropertyGetter(typeof(Agent), "HealthLimit"),
                     postfix: new HarmonyMethod(typeof(PerkHealthLimitPatch).GetMethod(nameof(PerkHealthLimitPatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
-                Log.Info("[Perk] Combat patches applied: Damage/Evade/Berserk (ComputeBlowDamage), HP (Agent.HealthLimit).");
+                harmony.Patch(
+                    AccessTools.Method(typeof(MissionCombatMechanicsHelper), "DecideAgentShrugOffBlow"),
+                    postfix: new HarmonyMethod(typeof(PerkShrugOffPatch).GetMethod(nameof(PerkShrugOffPatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
+                Log.Info("[Perk] Combat patches applied: Damage/Evade/Berserk/IgnoreArmor/CutThrough (ComputeBlowDamage), HP (Agent.HealthLimit), ShrugOff (DecideAgentShrugOffBlow).");
             }
             catch (Exception ex) { Log.Exception("[Perk] Combat patch setup failed", ex); }
         }
@@ -516,6 +519,28 @@ namespace PeasantRebellionPerks
                 }
             }
             catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Postfix", ex); }
+        }
+    }
+
+    // Shrug Off: DecideAgentShrugOffBlow is a static method on the same
+    // MissionCombatMechanicsHelper class already patched above (reflection-confirmed
+    // 2026-08-12) - the engine calls it to decide whether the victim staggers/knocks down from
+    // this blow. Returning true here means "shrug it off," matching BlowFlags.ShrugOff's native
+    // meaning (already used elsewhere in BLTAdoptAHero for an unrelated power).
+    [HarmonyPatch(typeof(MissionCombatMechanicsHelper), "DecideAgentShrugOffBlow")]
+    internal static class PerkShrugOffPatch
+    {
+        public static void Postfix(Agent victimAgent, ref bool __result)
+        {
+            try
+            {
+                if (__result) return; // already shrugging off for another reason
+                var hero = victimAgent?.GetAdoptedHero();
+                if (hero == null) return;
+                float bonus = PerkService.GetBonus(hero, "Shrug Off");
+                if (bonus > 0f && MBRandom.RandomFloat < bonus) __result = true;
+            }
+            catch (Exception ex) { Log.Exception("PerkShrugOffPatch.Postfix", ex); }
         }
     }
 
