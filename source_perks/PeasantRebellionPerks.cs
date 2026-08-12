@@ -85,11 +85,30 @@ namespace PeasantRebellionPerks
     }
 
     [DisplayName("Peasant Rebellion - Perks")]
-    public class PerkGlobalConfig : IDocumentable
+    public class PerkGlobalConfig : IDocumentable, IUpdateFromDefault
     {
         private const string ID = "Peasant Rebellion - Perks";
         internal static void Register() => ActionManager.RegisterGlobalConfigType(ID, typeof(PerkGlobalConfig));
         internal static PerkGlobalConfig Get() => ActionManager.GetGlobalConfig<PerkGlobalConfig>(ID);
+
+        // Without this, a hero's already-saved settings file (which has its own serialized Perks
+        // list from whenever they first installed the mod) permanently shadows PerkCatalog.Default()
+        // - new branches added to the catalog in code would never appear for anyone who already has
+        // a saved "Peasant Rebellion - Perks" config section. BannerlordTwitch calls
+        // OnUpdateFromDefault on every IUpdateFromDefault config automatically on settings load
+        // (see Settings.cs Load()); this merges in any catalog entry (by Key) not already present,
+        // leaving already-customized entries untouched. Deliberately merges against
+        // PerkCatalog.Default() directly rather than the passed-in Settings object - the
+        // established pattern elsewhere in this codebase (e.g. GlobalHeroClassConfig) resolves the
+        // "default" side via Get(defaultSettings), but that call is a self-reference here (the
+        // settings object walked by CallInDepth is the same one passed back into this method, so
+        // Get(defaultSettings) returns this exact instance) - reading straight from the actual code
+        // default avoids depending on that.
+        public void OnUpdateFromDefault(BannerlordTwitch.Settings defaultSettings)
+        {
+            Perks ??= new List<PerkDef>();
+            SettingsHelpers.MergeCollections(Perks, PerkCatalog.Default(), (a, b) => a.Key == b.Key);
+        }
 
         [DisplayName("Enabled"), Category("1 - General"), PropertyOrder(1),
          Description("Enables/disables the entire perk system. When disabled, !perk reports it's off and no bonuses apply."), UsedImplicitly]
