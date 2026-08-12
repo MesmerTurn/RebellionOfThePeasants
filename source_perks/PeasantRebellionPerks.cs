@@ -169,6 +169,7 @@ namespace PeasantRebellionPerks
                         BonusPerRank = bonusPerRank,
                         RequiredPerkKey = prevKey,
                         RequiredRank = 1,
+                        Requirements = string.IsNullOrEmpty(prevKey) ? new List<PerkRequirement>() : new List<PerkRequirement> { new PerkRequirement { PerkKey = prevKey, MinRank = 1 } },
                     });
                     prevKey = key;
                 }
@@ -188,6 +189,59 @@ namespace PeasantRebellionPerks
             Branch("Weapon Mastery: Polearm",    "wmpole", 0.015f);
             Branch("Weapon Mastery: Thrown",     "wmthrow", 0.015f);
             Branch("Weapon Swap Speed", "swapspd", 0.015f);
+
+            Branch("Cleave",         "cleave",     0.15f); // % of the hit's damage also dealt to nearby enemies in a forward arc
+            Branch("Ignore Armor",   "ignorearmor",0.10f); // % of armor-absorbed damage given back as extra damage
+            Branch("Cut Through",    "cutthrough", 0.10f); // % chance a shield-blocked hit still deals partial damage
+            Branch("Shrug Off",      "shrugoff",   0.10f); // % chance to not stagger/knock down when hit
+            Branch("AOE",            "aoe",        0.08f); // % chance a ranged hit also splashes nearby enemies
+            Branch("Weapon Mastery: One-Handed", "wm1h", 0.015f); // % bonus melee damage with one-handed weapons
+
+            // Hybrid capstones: each requires rank 2 in two different branches at once (the
+            // Requirements list's first real multi-entry use). Each gets its own single-entry
+            // branch name so the constellation renderer gives it its own spoke with both
+            // cross-branch lines converging into it, instead of visually belonging to only one of
+            // the two branches it actually requires.
+            list.Add(new PerkDef
+            {
+                Key = "hybrid_duelist", DisplayName = "Duelist", Branch = "Duelist (Capstone)",
+                MaxRank = 1, BonusPerRank = 0.08f, MinLevel = 15,
+                Requirements = new List<PerkRequirement>
+                {
+                    new PerkRequirement { PerkKey = "dmg_2", MinRank = 1 },
+                    new PerkRequirement { PerkKey = "evade_2", MinRank = 1 },
+                },
+            });
+            list.Add(new PerkDef
+            {
+                Key = "hybrid_juggernaut", DisplayName = "Juggernaut", Branch = "Juggernaut (Capstone)",
+                MaxRank = 1, BonusPerRank = 0.08f, MinLevel = 15,
+                Requirements = new List<PerkRequirement>
+                {
+                    new PerkRequirement { PerkKey = "hp_2", MinRank = 1 },
+                    new PerkRequirement { PerkKey = "ignorearmor_2", MinRank = 1 },
+                },
+            });
+            list.Add(new PerkDef
+            {
+                Key = "hybrid_reaper", DisplayName = "Reaper", Branch = "Reaper (Capstone)",
+                MaxRank = 1, BonusPerRank = 0.10f, MinLevel = 15,
+                Requirements = new List<PerkRequirement>
+                {
+                    new PerkRequirement { PerkKey = "cleave_2", MinRank = 1 },
+                    new PerkRequirement { PerkKey = "berserk_2", MinRank = 1 },
+                },
+            });
+            list.Add(new PerkDef
+            {
+                Key = "hybrid_marksman", DisplayName = "Marksman", Branch = "Marksman (Capstone)",
+                MaxRank = 1, BonusPerRank = 0.08f, MinLevel = 15,
+                Requirements = new List<PerkRequirement>
+                {
+                    new PerkRequirement { PerkKey = "acc_2", MinRank = 1 },
+                    new PerkRequirement { PerkKey = "aoe_2", MinRank = 1 },
+                },
+            });
 
             return list;
         }
