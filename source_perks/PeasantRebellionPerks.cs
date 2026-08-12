@@ -525,6 +525,14 @@ namespace PeasantRebellionPerks
                 {
                     ApplyCleave(atkAgent, attackCollisionData.CollisionGlobalPosition.AsVec2, inflictedDamage, cleaveBonus);
                 }
+
+                // AOE: ranged-only (bow/crossbow/thrown), a % chance per hit (not guaranteed like
+                // Cleave) to splash damage onto every enemy in a full circle around the hit.
+                float aoeChance = PerkService.GetBonus(attackerHero, "AOE");
+                if (aoeChance > 0f && attackCollisionData.IsMissile && MBRandom.RandomFloat < aoeChance)
+                {
+                    ApplyRangedAoe(atkAgent, attackCollisionData.CollisionGlobalPosition.AsVec2, inflictedDamage);
+                }
             }
             catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Postfix", ex); }
         }
@@ -556,6 +564,30 @@ namespace PeasantRebellionPerks
                 if (angleBetween > CleaveHalfAngleDegrees) continue;
 
                 other.Health = Math.Max(0f, other.Health - cleaveDamage);
+            }
+        }
+
+        // Ranged AOE: same nearby-enemy search as Cleave, full circle instead of a forward arc
+        // (a thrown/loosed projectile has no "swing direction" to restrict to), fixed 50% of the
+        // original hit's damage to each enemy caught in the radius - deliberately not
+        // perk-tunable per rank the way Cleave's percentage is, since AOE's real lever is its
+        // trigger *chance* (ranked via aoeChance above), not its magnitude.
+        private const float RangedAoeRadius = 3f;
+
+        private static void ApplyRangedAoe(Agent attacker, Vec2 hitPosition, int originalDamage)
+        {
+            if (attacker?.Mission == null) return;
+            int splashDamage = Math.Max(1, originalDamage / 2);
+
+            foreach (var other in attacker.Mission.Agents)
+            {
+                if (other == null || other == attacker || !other.IsActive()) continue;
+                if (other.Team == null || attacker.Team == null || !attacker.Team.IsEnemyOf(other.Team)) continue;
+
+                float distance = (other.Position.AsVec2 - hitPosition).Length;
+                if (distance > RangedAoeRadius) continue;
+
+                other.Health = Math.Max(0f, other.Health - splashDamage);
             }
         }
     }
