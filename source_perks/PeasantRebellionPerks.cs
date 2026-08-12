@@ -126,12 +126,10 @@ namespace PeasantRebellionPerks
                             Key: p.Key,
                             DisplayName: p.DisplayName,
                             BonusPerRank: p.BonusPerRank,
-                            // Single-entry today - PerkDef still has one RequiredPerkKey (the
-                            // cross-branch multi-Requirements model is a separate, not-yet-landed
-                            // expansion per docs/superpowers/specs/2026-08-12-perk-system-expansion-design.md).
-                            // The renderer already accepts a list so that expansion won't need to
-                            // touch DocumentationGenerator again.
-                            RequiredPerkKeys: (IEnumerable<string>)(string.IsNullOrEmpty(p.RequiredPerkKey) ? Array.Empty<string>() : new[] { p.RequiredPerkKey }),
+                            // Real multi-entry Requirements list (2026-08-12 expansion) - a
+                            // hybrid capstone with 2 entries here draws 2 lines, one per source
+                            // branch, in the renderer.
+                            RequiredPerkKeys: (IEnumerable<string>)(p.Requirements ?? new List<PerkRequirement>()).Select(r => r.PerkKey).Where(k => !string.IsNullOrEmpty(k)),
                             RequirementText: BuildRequirementText(p)
                         ))
                     ));
@@ -142,7 +140,11 @@ namespace PeasantRebellionPerks
         private static string BuildRequirementText(PerkDef p)
         {
             var parts = new List<string>();
-            if (!string.IsNullOrEmpty(p.RequiredPerkKey)) parts.Add($"{p.RequiredPerkKey} rank {p.RequiredRank}+");
+            foreach (var req in p.Requirements ?? new List<PerkRequirement>())
+            {
+                if (string.IsNullOrEmpty(req.PerkKey)) continue;
+                parts.Add($"{req.PerkKey} rank {req.MinRank}+");
+            }
             if (p.MinLevel > 0) parts.Add($"level {p.MinLevel}+");
             if (!string.IsNullOrEmpty(p.RequiredAchievementKey)) parts.Add($"achievement '{p.RequiredAchievementKey}'");
             return string.Join(", ", parts);
