@@ -471,14 +471,29 @@ namespace PeasantRebellionPerks
             catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Prefix", ex); }
         }
 
-        public static void Postfix(ref AttackInformation attackInformation, bool cancelDamage, ref int inflictedDamage)
+        public static void Postfix(ref AttackInformation attackInformation, bool cancelDamage, ref int inflictedDamage,
+            ref AttackCollisionData attackCollisionData, ref int absorbedByArmor)
         {
             try
             {
-                if (cancelDamage || inflictedDamage <= 0) return;
                 var atkAgent = attackInformation.AttackerAgent;
                 var attackerHero = atkAgent?.GetAdoptedHero();
-                if (attackerHero == null) return;
+
+                // Cut Through can push damage through a fully-blocked hit even when cancelDamage
+                // is true for a shield block (a block isn't the same as Evade's cancelDamage
+                // path, but inflictedDamage is 0 either way for a fully-absorbed block) - checked
+                // before the early-return below, which only guards the damage-scaling perks that
+                // need a real hit to scale.
+                if (!cancelDamage && attackerHero != null && attackCollisionData.AttackBlockedWithShield && inflictedDamage <= 0)
+                {
+                    float cutThroughChance = PerkService.GetBonus(attackerHero, "Cut Through");
+                    if (cutThroughChance > 0f && MBRandom.RandomFloat < cutThroughChance)
+                    {
+                        inflictedDamage = Math.Max(1, (int)(attackCollisionData.BaseMagnitude * 0.25f));
+                    }
+                }
+
+                if (cancelDamage || inflictedDamage <= 0 || attackerHero == null) return;
 
                 float dmgBonus = PerkService.GetBonus(attackerHero, "Damage");
 
@@ -491,6 +506,14 @@ namespace PeasantRebellionPerks
 
                 float totalBonus = dmgBonus + berserkBonus;
                 if (totalBonus > 0f) inflictedDamage = (int)(inflictedDamage * (1f + totalBonus));
+
+                // Ignore Armor: give back a percentage of whatever this hit's armor already
+                // absorbed, on top of the damage-multiplier branches above.
+                float ignoreArmorBonus = PerkService.GetBonus(attackerHero, "Ignore Armor");
+                if (ignoreArmorBonus > 0f && absorbedByArmor > 0)
+                {
+                    inflictedDamage += (int)(absorbedByArmor * ignoreArmorBonus);
+                }
             }
             catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Postfix", ex); }
         }
