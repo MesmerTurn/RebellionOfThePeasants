@@ -517,8 +517,46 @@ namespace PeasantRebellionPerks
                 {
                     inflictedDamage += (int)(absorbedByArmor * ignoreArmorBonus);
                 }
+
+                // Cleave: melee-only, guaranteed (not a chance roll) - a percentage of this hit's
+                // damage also lands on other enemies in a narrow forward arc from the attacker.
+                float cleaveBonus = PerkService.GetBonus(attackerHero, "Cleave");
+                if (cleaveBonus > 0f && !attackCollisionData.IsMissile)
+                {
+                    ApplyCleave(atkAgent, attackCollisionData.CollisionGlobalPosition.AsVec2, inflictedDamage, cleaveBonus);
+                }
             }
             catch (Exception ex) { Log.Exception("PerkDamageEvadePatch.Postfix", ex); }
+        }
+
+        // Cleave: hit every OTHER enemy agent within CleaveRadius of the original hit location
+        // AND within +/-CleaveHalfAngleDegrees of the attacker's forward direction, for
+        // cleaveBonus% of the original hit's damage each. Deliberately excludes the agent that
+        // was already hit (that damage was already applied by the normal Postfix flow above).
+        private const float CleaveRadius = 2.5f;
+        private const float CleaveHalfAngleDegrees = 60f;
+
+        private static void ApplyCleave(Agent attacker, Vec2 hitPosition, int originalDamage, float cleaveBonus)
+        {
+            if (attacker?.Mission == null) return;
+            Vec2 forward = attacker.LookDirection.AsVec2.Normalized();
+            int cleaveDamage = Math.Max(1, (int)(originalDamage * cleaveBonus));
+
+            foreach (var other in attacker.Mission.Agents)
+            {
+                if (other == null || other == attacker || !other.IsActive()) continue;
+                if (other.Team == null || attacker.Team == null || !attacker.Team.IsEnemyOf(other.Team)) continue;
+
+                Vec2 toOther = other.Position.AsVec2 - hitPosition;
+                float distance = toOther.Length;
+                if (distance > CleaveRadius || distance <= 0.01f) continue;
+
+                float dot = MBMath.ClampFloat(Vec2.DotProduct(forward, toOther.Normalized()), -1f, 1f);
+                float angleBetween = (float)Math.Abs(Math.Acos(dot)) * (180f / (float)Math.PI);
+                if (angleBetween > CleaveHalfAngleDegrees) continue;
+
+                other.Health = Math.Max(0f, other.Health - cleaveDamage);
+            }
         }
     }
 
