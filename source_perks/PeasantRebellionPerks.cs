@@ -356,6 +356,22 @@ namespace PeasantRebellionPerks
                 // ExternalHealthLimitModifiers (BLTAdoptAHero.Patches) instead, which lets core's
                 // own already-working patch chain apply the bonus - see PerkHealthLimitPatch below.
                 BLTAdoptAHero.Patches.ExternalHealthLimitModifiers.Multiplier += PerkHealthLimitPatch.GetMultiplier;
+
+                // Hero Appearance Gallery (2026-08-17): contribute perk-adjusted stats for
+                // display, without BLTAdoptAHero.dll knowing anything about perks - same
+                // dependency-direction reasoning as the hook above.
+                BLTAdoptAHero.Patches.HeroStatSummaryHook.Contributor += hero =>
+                {
+                    float hpBonus = PerkService.GetBonus(hero, "HP");
+                    float dmgBonus = PerkService.GetBonus(hero, "Damage");
+                    float armorBonus = PerkService.GetBonus(hero, "Mounted Armor");
+                    return new BLTAdoptAHero.Patches.HeroStatSummary
+                    {
+                        MaxHP = 100f * (1f + hpBonus), // 100 = native BaseHealthLimit floor; real value needs a live Agent, this is a reasonable estimate for display purposes
+                        DamageBonusPercent = dmgBonus * 100f,
+                        ArmorBonus = armorBonus * 100f,
+                    };
+                };
                 Log.Info("[Perk] Combat patches applied: Damage/Evade/Berserk/IgnoreArmor/CutThrough (ComputeBlowDamage), HP (via ExternalHealthLimitModifiers), ShrugOff (DecideAgentShrugOffBlow).");
             }
             catch (Exception ex) { Log.Exception("[Perk] Combat patch setup failed", ex); }
