@@ -342,17 +342,21 @@ namespace PeasantRebellionPerks
             try
             {
                 harmony = new Harmony("mod.bannerlord.peasantrebellionperks");
-                harmony.Patch(
-                    AccessTools.Method(typeof(MissionCombatMechanicsHelper), "ComputeBlowDamage"),
-                    prefix: new HarmonyMethod(typeof(PerkDamageEvadePatch).GetMethod(nameof(PerkDamageEvadePatch.Prefix), BindingFlags.Static | BindingFlags.Public)),
-                    postfix: new HarmonyMethod(typeof(PerkDamageEvadePatch).GetMethod(nameof(PerkDamageEvadePatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
-                harmony.Patch(
-                    AccessTools.PropertyGetter(typeof(Agent), "HealthLimit"),
-                    postfix: new HarmonyMethod(typeof(PerkHealthLimitPatch).GetMethod(nameof(PerkHealthLimitPatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
-                harmony.Patch(
-                    AccessTools.Method(typeof(MissionCombatMechanicsHelper), "DecideAgentShrugOffBlow"),
-                    postfix: new HarmonyMethod(typeof(PerkShrugOffPatch).GetMethod(nameof(PerkShrugOffPatch.Postfix), BindingFlags.Static | BindingFlags.Public)));
-                Log.Info("[Perk] Combat patches applied: Damage/Evade/Berserk/IgnoreArmor/CutThrough (ComputeBlowDamage), HP (Agent.HealthLimit), ShrugOff (DecideAgentShrugOffBlow).");
+                harmony.PatchAll();
+                // 2026-08-17: HP bonus is NOT a Harmony patch on Agent's HealthLimit/BaseHealthLimit
+                // getter anymore. Bisection under game v1.4.8 found that ANY patch on either of
+                // those two getters from THIS assembly's own Harmony instance - manual
+                // harmony.Patch(AccessTools...) and [HarmonyPatch]+PatchAll() both tested - makes
+                // every agent in the game render lying on its side, including vanilla troops with
+                // no adopted hero (patch logic itself was already a harmless no-op for them, so it
+                // wasn't a logic bug). Core's own BLTAdoptAHero.Patches.PrestigeStatPatches/
+                // T8HealthPatch patch the exact same getter from THEIR OWN Harmony instance with
+                // zero issue - the problem is specific to a second, external assembly's Harmony
+                // instance touching this particular getter under 1.4.8. Routed through
+                // ExternalHealthLimitModifiers (BLTAdoptAHero.Patches) instead, which lets core's
+                // own already-working patch chain apply the bonus - see PerkHealthLimitPatch below.
+                BLTAdoptAHero.Patches.ExternalHealthLimitModifiers.Multiplier += PerkHealthLimitPatch.GetMultiplier;
+                Log.Info("[Perk] Combat patches applied: Damage/Evade/Berserk/IgnoreArmor/CutThrough (ComputeBlowDamage), HP (via ExternalHealthLimitModifiers), ShrugOff (DecideAgentShrugOffBlow).");
             }
             catch (Exception ex) { Log.Exception("[Perk] Combat patch setup failed", ex); }
         }
@@ -689,19 +693,25 @@ namespace PeasantRebellionPerks
         }
     }
 
-    [HarmonyPatch(typeof(Agent), "HealthLimit", MethodType.Getter)]
+    // No longer a [HarmonyPatch] of its own - see the 2026-08-17 note in OnSubModuleLoad above.
+    // GetMultiplier is subscribed to BLTAdoptAHero.Patches.ExternalHealthLimitModifiers.Multiplier
+    // instead, so core's own already-working Harmony patch on Agent.BaseHealthLimit applies it.
     internal static class PerkHealthLimitPatch
     {
-        public static void Postfix(Agent __instance, ref float __result)
+        public static float GetMultiplier(Agent agent)
         {
             try
             {
-                var hero = __instance?.GetAdoptedHero();
-                if (hero == null) return;
+                var hero = agent?.GetAdoptedHero();
+                if (hero == null) return 1f;
                 float bonus = PerkService.GetBonus(hero, "HP");
-                if (bonus > 0f) __result *= (1f + bonus);
+                return bonus > 0f ? (1f + bonus) : 1f;
             }
-            catch (Exception ex) { Log.Exception("PerkHealthLimitPatch.Postfix", ex); }
+            catch (Exception ex)
+            {
+                Log.Exception("PerkHealthLimitPatch.GetMultiplier", ex);
+                return 1f;
+            }
         }
     }
 

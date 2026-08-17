@@ -372,6 +372,25 @@ namespace MakeBltGreatAgain
         }
     }
 
+    // Same problem, different call: 5 of MBGA's MBSubModuleBase constructors (Formation, Guard,
+    // Upgrade, Duel, Auras) each call ActionManager.RegisterAll(typeof(X).Assembly) - and since
+    // typeof(X).Assembly is always the same MakeBltGreatAgain.dll, this scans and re-registers
+    // every [ActionHandler]-attributed Reward/Command class in the assembly once per constructor.
+    // Confirmed in rgl_log_18160.txt (2026-08-17, game v1.4.8): first registration succeeds, the
+    // other 4 each fail with "X already registered, please choose another name" for every single
+    // handler. Discovered while investigating the "characters lie on their side" bug (matches the
+    // symptom class already documented for duplicate PatchAll - see MbgaPatchGuard above).
+    internal static class MbgaActionRegisterGuard
+    {
+        private static bool _applied;
+        public static bool ShouldApply()
+        {
+            if (_applied) return false;
+            _applied = true;
+            return true;
+        }
+    }
+
     // ======================================================================
     // BLTFormation
     // ======================================================================
@@ -382,7 +401,7 @@ public class BLTFormationModule : MBSubModuleBase
 
         public BLTFormationModule()
         {
-            ActionManager.RegisterAll(typeof(BLTFormationModule).Assembly);
+            if (MbgaActionRegisterGuard.ShouldApply()) ActionManager.RegisterAll(typeof(BLTFormationModule).Assembly);
         }
 
         protected override void OnSubModuleLoad()
@@ -776,7 +795,7 @@ public class BLTGuardModule : MBSubModuleBase
 
         public BLTGuardModule()
         {
-            ActionManager.RegisterAll(typeof(BLTGuardModule).Assembly);
+            if (MbgaActionRegisterGuard.ShouldApply()) ActionManager.RegisterAll(typeof(BLTGuardModule).Assembly);
         }
 
         protected override void OnSubModuleLoad()
@@ -1914,7 +1933,7 @@ public class BLTUpgradeModule : MBSubModuleBase
 
         public BLTUpgradeModule()
         {
-            ActionManager.RegisterAll(typeof(BLTUpgradeModule).Assembly);
+            if (MbgaActionRegisterGuard.ShouldApply()) ActionManager.RegisterAll(typeof(BLTUpgradeModule).Assembly);
         }
 
         protected override void OnSubModuleLoad()
@@ -2293,7 +2312,7 @@ public class BLTDuelModule : MBSubModuleBase
     {
         public BLTDuelModule()
         {
-            ActionManager.RegisterAll(typeof(BLTDuelModule).Assembly);
+            if (MbgaActionRegisterGuard.ShouldApply()) ActionManager.RegisterAll(typeof(BLTDuelModule).Assembly);
         }
 
         protected override void OnSubModuleLoad()
@@ -2657,7 +2676,7 @@ public class BLTAurasModule : MBSubModuleBase
 
         public BLTAurasModule()
         {
-            ActionManager.RegisterAll(typeof(BLTAurasModule).Assembly);
+            if (MbgaActionRegisterGuard.ShouldApply()) ActionManager.RegisterAll(typeof(BLTAurasModule).Assembly);
             // Rejestracja w konstruktorze — niezależna od PatchAll, na pewno wykona się przed ładowaniem ustawień
             try { PowerProgressionGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[PowerProg] Register failed", ex); }
             try { WandererGlobalConfig.Register(); } catch (Exception ex) { Log.Exception("[Wanderer] Register failed", ex); }
